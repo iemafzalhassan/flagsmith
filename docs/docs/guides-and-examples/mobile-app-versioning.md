@@ -49,8 +49,8 @@ is affected.
 
 :::tip
 
-We can make use of [Semver Aware Operators](/basic-features/managing-segments#semver-aware-operators) to drive these
-Segment rules.
+We can make use of [Semver Aware Operators](/basic-features/managing-segments?operators=semver#segment-rule-ordering) to
+drive these Segment rules.
 
 :::
 
@@ -60,7 +60,7 @@ in version `5.4.0`. Also, this issue is only affecting iOS devices; Android user
 would contain 2 rules and read something like:
 
 - Trait `platform` _equals_ `iOS`
-- Trait `version` _semver >=_ `5.4.0` **AND** _semver<=_ `5.4.1`
+- Trait `version` _semver_ {'>='} `5.4.0` **AND** _semver_ {'<='} `5.4.1`
 
 ### 5. Override your Feature with your Segment
 

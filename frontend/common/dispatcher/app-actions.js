@@ -21,9 +21,10 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
       identity,
     })
   },
-  confirmTwoFactor(pin, onError) {
+  confirmTwoFactor(pin, onError, isLoginPage) {
     Dispatcher.handleViewAction({
       actionType: Actions.CONFIRM_TWO_FACTOR,
+      isLoginPage,
       onError,
       pin,
     })
@@ -46,26 +47,19 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
       segmentOverrides,
     })
   },
-  createGroup(orgId, data) {
-    Dispatcher.handleViewAction({
-      actionType: Actions.CREATE_GROUP,
-      data,
-      orgId,
-    })
-  },
   createOrganisation(name) {
     Dispatcher.handleViewAction({
       actionType: Actions.CREATE_ORGANISATION,
       name,
     })
   },
-
   createProject(name) {
     Dispatcher.handleViewAction({
       actionType: Actions.CREATE_PROJECT,
       name,
     })
   },
+
   deleteChangeRequest(id, cb) {
     Dispatcher.handleViewAction({
       actionType: Actions.DELETE_CHANGE_REQUEST,
@@ -262,12 +256,6 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
       sort,
     })
   },
-  getGroups(orgId) {
-    Dispatcher.handleViewAction({
-      actionType: Actions.GET_GROUPS,
-      orgId,
-    })
-  },
   getIdentity(envId, id) {
     Dispatcher.handleViewAction({
       actionType: Actions.GET_IDENTITY,
@@ -339,9 +327,10 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
       projectId,
     })
   },
-  removeUserFlag({ environmentId, identity, identityFlag }) {
+  removeUserFlag({ cb, environmentId, identity, identityFlag }) {
     Dispatcher.handleViewAction({
       actionType: Actions.REMOVE_USER_FLAG,
+      cb,
       environmentId,
       identity,
       identityFlag,
@@ -371,7 +360,6 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
     force,
     search,
     sort,
-    page,
     filter,
     pageSize,
   ) {
@@ -380,7 +368,6 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
       environmentId,
       filter,
       force,
-      page,
       pageSize,
       projectId,
       search,
@@ -420,13 +407,6 @@ const AppActions = Object.assign({}, require('./base/_app-actions'), {
     Dispatcher.handleViewAction({
       actionType: Actions.UPDATE_CHANGE_REQUEST,
       changeRequest,
-    })
-  },
-  updateGroup(orgId, data) {
-    Dispatcher.handleViewAction({
-      actionType: Actions.UPDATE_GROUP,
-      data,
-      orgId,
     })
   },
   updateSubscription(hostedPageId) {

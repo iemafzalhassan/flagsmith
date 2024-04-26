@@ -5,7 +5,6 @@ import ErrorMessage from 'components/ErrorMessage'
 import _data from 'common/data/base/_data'
 import ConfigProvider from 'common/providers/ConfigProvider'
 import TwoFactor from 'components/TwoFactor'
-import PaymentModal from 'components/modals/Payment'
 import Token from 'components/Token'
 import Tabs from 'components/base/forms/Tabs'
 import TabItem from 'components/base/forms/TabItem'
@@ -15,6 +14,9 @@ import { getStore } from 'common/store'
 import ChangeEmailAddress from 'components/modals/ChangeEmailAddress'
 import ConfirmDeleteAccount from 'components/modals/ConfirmDeleteAccount'
 import Icon from 'components/Icon'
+import PageTitle from 'components/PageTitle'
+import { Link } from 'react-router-dom'
+import InfoMessage from 'components/InfoMessage'
 
 class TheComponent extends Component {
   static displayName = 'TheComponent'
@@ -66,22 +68,26 @@ class TheComponent extends Component {
   }
 
   invalidateToken = () => {
-    openConfirm(
-      'Invalidate Token',
-      <div>
-        Invalidating your token will generate a new token to use with our API,{' '}
-        <span className='text-dark font-weight-medium'>
-          your current token will no longer work
-        </span>
-        . Performing this action will also log you out, are you sure you wish to
-        do this?
-      </div>,
-      () => {
+    openConfirm({
+      body: (
+        <div>
+          Invalidating your token will generate a new token to use with our API,{' '}
+          <span className='text-dark font-weight-medium'>
+            your current token will no longer work
+          </span>
+          . Performing this action will also log you out, are you sure you wish
+          to do this?
+        </div>
+      ),
+      destructive: true,
+      onYes: () => {
         _data.delete(`${Project.api}auth/token/`).then(() => {
           AppActions.logout()
         })
       },
-    )
+      title: 'Invalidate Token',
+      yesText: 'Confirm',
+    })
   }
 
   savePassword = (e) => {
@@ -151,11 +157,23 @@ class TheComponent extends Component {
                 One of your organisations has enfoced Two-Factor Authentication,
                 please enable it to continue.
               </p>
-              <TwoFactor />
+              <TwoFactor isLoginPage={true} />
             </div>
           ) : (
             <div className='app-container container'>
-              <Tabs uncontrolled>
+              <PageTitle
+                cta={
+                  <Button
+                    id='logout-link'
+                    theme='secondary'
+                    onClick={AppActions.logout}
+                  >
+                    Log Out
+                  </Button>
+                }
+                title={'Account'}
+              />
+              <Tabs uncontrolled className='mt-0'>
                 <TabItem tabLabel='General'>
                   <div className='mt-4'>
                     <h5 className='mb-5'>General Settings</h5>
@@ -185,30 +203,28 @@ class TheComponent extends Component {
                             type='text'
                             name='Email Address'
                           />
-                          {Utils.getFlagsmithHasFeature('change_email') && (
-                            <div className='text-right mt-5'>
-                              <Button
-                                onClick={() =>
-                                  openModal(
-                                    'Change Email Address',
-                                    <ChangeEmailAddress
-                                      onComplete={() => {
-                                        closeModal()
-                                        AppActions.logout()
-                                      }}
-                                    />,
-                                    'p-0',
-                                  )
-                                }
-                                id='change-email-button'
-                                data-test='change-email-button'
-                                type='button'
-                                class='input-group-addon'
-                              >
-                                Change Email Address
-                              </Button>
-                            </div>
-                          )}
+                          <div className='text-right mt-5'>
+                            <Button
+                              onClick={() =>
+                                openModal(
+                                  'Change Email Address',
+                                  <ChangeEmailAddress
+                                    onComplete={() => {
+                                      closeModal()
+                                      AppActions.logout()
+                                    }}
+                                  />,
+                                  'p-0',
+                                )
+                              }
+                              id='change-email-button'
+                              data-test='change-email-button'
+                              type='button'
+                              class='input-group-addon'
+                            >
+                              Change Email Address
+                            </Button>
+                          </div>
                         </div>
                         <InputGroup
                           className='mt-2 mb-4'
@@ -299,23 +315,32 @@ class TheComponent extends Component {
                     </div>
                   </div>
                 </TabItem>
-                <TabItem tabLabel='Keys'>
-                  <div className='mt-4'>
+                <TabItem tabLabel='API Keys'>
+                  <div className='mt-6'>
                     <div className='col-md-6'>
-                      <h5>API Token</h5>
-                      <p className='fs-small lh-sm'>
-                        You can use this token to integrate with our RESTful
-                        API, the documentation can be found{' '}
-                        <Button
-                          theme='text'
-                          href='https://api.flagsmith.com/api/v1/docs/'
-                          target='_blank'
-                          className='fw-normal'
-                        >
-                          here
-                        </Button>
-                        .
-                      </p>
+                      <h5>Manage API Keys</h5>
+                      <InfoMessage>
+                        <p>
+                          You can use this token to securely integrate with the
+                          private endpoints of our{' '}
+                          <Button
+                            theme='text'
+                            href='https://docs.flagsmith.com/clients/rest#private-api-endpoints'
+                            target='_blank'
+                            className='fw-normal'
+                          >
+                            RESTful API
+                          </Button>
+                          .
+                        </p>
+                        <p>
+                          This key should <strong>not</strong> be used directly
+                          with our SDKs. To configure the Flagsmith SDK, go to
+                          the Environment settings page and copy the Environment
+                          key from there.
+                        </p>
+                      </InfoMessage>
+                      <p className='fs-small lh-sm'></p>
                     </div>
                     <div className='col-md-6'>
                       <Token className='full-width' token={_data.token} />
@@ -425,19 +450,12 @@ class TheComponent extends Component {
                         <TwoFactor />
                       ) : (
                         <div className='text-right'>
-                          <button
-                            type='button'
+                          <Link
+                            to='/organisation-settings'
                             className='btn btn-primary text-center ml-auto mt-2 mb-2'
-                            onClick={() => {
-                              openModal(
-                                'Payment plans',
-                                <PaymentModal viewOnly={false} />,
-                                'modal-lg',
-                              )
-                            }}
                           >
                             Manage payment plan
-                          </button>
+                          </Link>
                         </div>
                       )}
                     </div>

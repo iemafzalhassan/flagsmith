@@ -1,9 +1,14 @@
 from datetime import timedelta
 
 from django.utils import timezone
+from pytest_django import DjangoAssertNumQueries
+from pytest_django.fixtures import SettingsWrapper
 
-from task_processor.models import Task
-from task_processor.tasks import clean_up_old_tasks
+from task_processor.models import RecurringTask, RecurringTaskRun, Task
+from task_processor.tasks import (
+    clean_up_old_recurring_task_runs,
+    clean_up_old_tasks,
+)
 
 now = timezone.now()
 three_days_ago = now - timedelta(days=3)
@@ -23,7 +28,22 @@ def test_clean_up_old_tasks_does_nothing_when_no_tasks(db):
     assert Task.objects.count() == 0
 
 
-def test_clean_up_old_tasks(settings, django_assert_num_queries, db):
+def test_clean_up_old_recurring_task_runs_does_nothing_when_no_runs(db: None) -> None:
+    # Given
+    assert RecurringTaskRun.objects.count() == 0
+
+    # When
+    clean_up_old_recurring_task_runs()
+
+    # Then
+    assert RecurringTaskRun.objects.count() == 0
+
+
+def test_clean_up_old_tasks(
+    settings: SettingsWrapper,
+    django_assert_num_queries: DjangoAssertNumQueries,
+    db: None,
+) -> None:
     # Given
     settings.TASK_DELETE_RETENTION_DAYS = 2
     settings.TASK_DELETE_BATCH_SIZE = 1
@@ -71,9 +91,47 @@ def test_clean_up_old_tasks(settings, django_assert_num_queries, db):
     ]
 
 
+def test_clean_up_old_recurring_task_runs(
+    settings: SettingsWrapper,
+    django_assert_num_queries: DjangoAssertNumQueries,
+    db: None,
+) -> None:
+    # Given
+    settings.RECURRING_TASK_RUN_RETENTION_DAYS = 2
+    settings.ENABLE_CLEAN_UP_OLD_TASKS = True
+
+    recurring_task = RecurringTask.objects.create(
+        task_identifier="some_identifier", run_every=timedelta(seconds=1)
+    )
+
+    # 2 task runs finished before retention period
+    for _ in range(2):
+        RecurringTaskRun.objects.create(
+            started_at=three_days_ago,
+            task=recurring_task,
+            finished_at=three_days_ago,
+        )
+
+    # a task run that is within the retention period
+    task_in_retention_period = RecurringTaskRun.objects.create(
+        task=recurring_task,
+        started_at=one_day_ago,
+        finished_at=one_day_ago,
+    )
+
+    # When
+    with django_assert_num_queries(1):
+        clean_up_old_recurring_task_runs()
+
+    # Then
+    assert list(RecurringTaskRun.objects.all()) == [task_in_retention_period]
+
+
 def test_clean_up_old_tasks_include_failed_tasks(
-    settings, django_assert_num_queries, db
-):
+    settings: SettingsWrapper,
+    django_assert_num_queries: DjangoAssertNumQueries,
+    db: None,
+) -> None:
     # Given
     settings.TASK_DELETE_RETENTION_DAYS = 2
     settings.TASK_DELETE_INCLUDE_FAILED_TASKS = True
@@ -106,3 +164,30 @@ def test_clean_up_old_tasks_does_not_run_if_disabled(
 
     # Then
     assert Task.objects.filter(id=task.id).exists()
+
+
+def test_clean_up_old_recurring_task_runs_does_not_run_if_disabled(
+    settings: SettingsWrapper,
+    django_assert_num_queries: DjangoAssertNumQueries,
+    db: None,
+) -> None:
+    # Given
+    settings.RECURRING_TASK_RUN_RETENTION_DAYS = 2
+    settings.ENABLE_CLEAN_UP_OLD_TASKS = False
+
+    recurring_task = RecurringTask.objects.create(
+        task_identifier="some_identifier", run_every=timedelta(seconds=1)
+    )
+
+    RecurringTaskRun.objects.create(
+        started_at=three_days_ago,
+        task=recurring_task,
+        finished_at=three_days_ago,
+    )
+
+    # When
+    with django_assert_num_queries(0):
+        clean_up_old_recurring_task_runs()
+
+    # Then
+    assert RecurringTaskRun.objects.exists()

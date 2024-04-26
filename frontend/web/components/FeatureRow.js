@@ -4,15 +4,20 @@ import ConfirmToggleFeature from './modals/ConfirmToggleFeature'
 import ConfirmRemoveFeature from './modals/ConfirmRemoveFeature'
 import CreateFlagModal from './modals/CreateFlag'
 import ProjectStore from 'common/stores/project-store'
-import Permission from 'common/providers/Permission'
 import Constants from 'common/constants'
-import { hasProtectedTag } from 'common/utils/hasProtectedTag'
-import SegmentsIcon from './svg/SegmentsIcon'
-import UsersIcon from './svg/UsersIcon' // we need this to make JSX compile
+import { getProtectedTags } from 'common/utils/getProtectedTags'
 import Icon from './Icon'
 import FeatureValue from './FeatureValue'
+import FeatureAction from './FeatureAction'
+import { getViewMode } from 'common/useViewMode'
+import classNames from 'classnames'
+import Tag from './tags/Tag'
+import Button from './base/forms/Button'
+import SegmentOverridesIcon from './SegmentOverridesIcon'
+import IdentityOverridesIcon from './IdentityOverridesIcon'
+import StaleFlagWarning from './StaleFlagWarning'
 
-export const width = [190, 65, 48, 75]
+export const width = [200, 70, 55, 70, 450]
 class TheComponent extends Component {
   static contextTypes = {
     router: propTypes.object.isRequired,
@@ -20,14 +25,29 @@ class TheComponent extends Component {
 
   state = {}
 
-  confirmToggle = (projectFlag, environmentFlag, cb) => {
+  confirmToggle = () => {
+    const {
+      environmentFlags,
+      environmentId,
+      projectFlag,
+      projectId,
+      toggleFlag,
+    } = this.props
+    const { id } = projectFlag
     openModal(
       'Toggle Feature',
       <ConfirmToggleFeature
         environmentId={this.props.environmentId}
         projectFlag={projectFlag}
-        environmentFlag={environmentFlag}
-        cb={cb}
+        environmentFlag={environmentFlags[id]}
+        cb={() => {
+          toggleFlag(
+            projectId,
+            environmentId,
+            projectFlag,
+            environmentFlags[id],
+          )
+        }}
       />,
       'p-0',
     )
@@ -38,12 +58,18 @@ class TheComponent extends Component {
     const { feature, tab } = Utils.fromParam()
     const { id } = projectFlag
     if (`${id}` === feature) {
-      this.editFeature(projectFlag, environmentFlags[id], tab)
+      this.editFeature(projectFlag, environmentFlags[id])
     }
   }
 
+  copyFeature = (e) => {
+    const { projectFlag } = this.props
+    e?.stopPropagation()?.()
+    e?.currentTarget?.blur?.()
+    Utils.copyFeatureName(projectFlag.name)
+  }
   confirmRemove = (projectFlag, cb) => {
-    openModal(
+    openModal2(
       'Remove Feature',
       <ConfirmRemoveFeature
         environmentId={this.props.environmentId}
@@ -55,26 +81,39 @@ class TheComponent extends Component {
   }
 
   editFeature = (projectFlag, environmentFlag, tab) => {
+    if (this.props.disableControls) {
+      return
+    }
     API.trackEvent(Constants.events.VIEW_FEATURE)
 
     history.replaceState(
       {},
       null,
-      `${document.location.pathname}?feature=${projectFlag.id}${
-        tab ? `&tab=${tab}` : ''
+      `${document.location.pathname}?feature=${projectFlag.id}&tab=${
+        tab || Utils.fromParam().tab || 'value'
       }`,
     )
     openModal(
-      `${this.props.permission ? 'Edit Feature' : 'Feature'}: ${
-        projectFlag.name
-      }`,
+      <Row>
+        {this.props.permission ? 'Edit Feature' : 'Feature'}: {projectFlag.name}
+        <Button
+          onClick={() => {
+            Utils.copyFeatureName(projectFlag.name)
+          }}
+          theme='icon'
+          className='ms-2'
+        >
+          <Icon name='copy' />
+        </Button>
+      </Row>,
       <CreateFlagModal
-        isEdit
+        history={this.context.router.history}
         environmentId={this.props.environmentId}
         projectId={this.props.projectId}
         projectFlag={projectFlag}
         noPermissions={!this.props.permission}
         environmentFlag={environmentFlag}
+        tab={tab}
         flagId={environmentFlag.id}
       />,
       'side-modal create-feature-modal',
@@ -86,101 +125,121 @@ class TheComponent extends Component {
 
   render() {
     const {
+      disableControls,
       environmentFlags,
       environmentId,
       permission,
       projectFlag,
-      projectFlags,
       projectId,
       removeFlag,
-      toggleFlag,
     } = this.props
     const { created_date, description, id, name } = this.props.projectFlag
     const readOnly =
       this.props.readOnly || Utils.getFlagsmithHasFeature('read_only_mode')
-    const isProtected = hasProtectedTag(projectFlag, projectId)
+    const protectedTags = getProtectedTags(projectFlag, projectId)
     const environment = ProjectStore.getEnvironment(environmentId)
     const changeRequestsEnabled = Utils.changeRequestsEnabled(
       environment && environment.minimum_change_request_approvals,
     )
-
+    const isCompact = getViewMode() === 'compact'
     if (this.props.condensed) {
-      return Utils.renderWithPermission(
-        permission,
-        Constants.environmentPermissions(
-          Utils.getManageFeaturePermissionDescription(changeRequestsEnabled),
-        ),
+      return (
         <Flex
-          onClick={() =>
+          onClick={() => {
+            if (disableControls) return
             !readOnly && this.editFeature(projectFlag, environmentFlags[id])
-          }
+          }}
           style={{
             ...(this.props.style || {}),
           }}
-          className='flex-row'
+          className={classNames(
+            'flex-row',
+            { 'fs-small': isCompact },
+            this.props.className,
+          )}
         >
           <div
             className={`table-column ${this.props.fadeEnabled && 'faded'}`}
-            style={{ width: '120px' }}
+            style={{ width: '80px' }}
           >
-            <Switch
-              disabled={!permission || readOnly}
-              data-test={`feature-switch-${this.props.index}${
-                environmentFlags[id] && environmentFlags[id].enabled
-                  ? '-on'
-                  : '-off'
-              }`}
-              checked={environmentFlags[id] && environmentFlags[id].enabled}
-              onChange={() => {
-                if (changeRequestsEnabled) {
-                  this.editFeature(projectFlag, environmentFlags[id])
-                  return
-                }
-                this.confirmToggle(
-                  projectFlag,
-                  environmentFlags[id],
-                  (environments) => {
-                    toggleFlag(
-                      _.findIndex(projectFlags, { id }),
-                      environments,
-                      null,
-                      this.props.environmentFlags,
-                      this.props.projectFlags,
-                    )
-                  },
-                )
-              }}
-            />
+            <Row>
+              <Switch
+                disabled={!permission || readOnly}
+                data-test={`feature-switch-${this.props.index}${
+                  environmentFlags[id] && environmentFlags[id].enabled
+                    ? '-on'
+                    : '-off'
+                }`}
+                checked={environmentFlags[id] && environmentFlags[id].enabled}
+                onChange={() => {
+                  if (disableControls) return
+                  if (changeRequestsEnabled) {
+                    this.editFeature(projectFlag, environmentFlags[id])
+                    return
+                  }
+                  this.confirmToggle()
+                }}
+              />
+            </Row>
           </div>
-          <Flex
-            className={`table-column clickable ${
-              this.props.fadeValue && 'faded'
-            }`}
-          >
-            <FeatureValue
-              onClick={() =>
-                permission &&
-                !readOnly &&
-                this.editFeature(projectFlag, environmentFlags[id])
-              }
-              value={
-                environmentFlags[id] && environmentFlags[id].feature_state_value
-              }
-              data-test={`feature-value-${this.props.index}`}
-            />
+          <Flex className={'table-column clickable'}>
+            <Row>
+              <div
+                onClick={() =>
+                  permission &&
+                  !readOnly &&
+                  this.editFeature(projectFlag, environmentFlags[id])
+                }
+                className={`flex-fill ${this.props.fadeValue ? 'faded' : ''}`}
+              >
+                <FeatureValue
+                  value={
+                    environmentFlags[id] &&
+                    environmentFlags[id].feature_state_value
+                  }
+                  data-test={`feature-value-${this.props.index}`}
+                />
+              </div>
+
+              <SegmentOverridesIcon
+                onClick={(e) => {
+                  e.stopPropagation()
+                  this.editFeature(
+                    projectFlag,
+                    environmentFlags[id],
+                    'segment-overrides',
+                  )
+                }}
+                count={projectFlag.num_segment_overrides}
+              />
+              <IdentityOverridesIcon
+                onClick={(e) => {
+                  e.stopPropagation()
+                  this.editFeature(
+                    projectFlag,
+                    environmentFlags[id],
+                    'identity-overrides',
+                  )
+                }}
+                count={projectFlag.num_identity_overrides}
+              />
+            </Row>
           </Flex>
-        </Flex>,
+        </Flex>
       )
     }
-    return Utils.renderWithPermission(
-      permission,
-      Constants.environmentPermissions(
-        Utils.getManageFeaturePermissionDescription(changeRequestsEnabled),
-      ),
+    return (
       <Row
-        className={`list-item ${readOnly ? '' : 'clickable'} ${
-          this.props.widget ? 'py-1' : 'py-2'
-        }`}
+        className={classNames(
+          `list-item ${readOnly ? '' : 'clickable'} ${
+            isCompact
+              ? 'py-0 list-item-xs fs-small'
+              : this.props.widget
+              ? 'py-1'
+              : 'py-2'
+          }`,
+          this.props.className,
+        )}
         key={id}
         space
         data-test={`feature-item-${this.props.index}`}
@@ -191,78 +250,86 @@ class TheComponent extends Component {
         <Flex className='table-column'>
           <Row>
             <Flex>
-              <Row
-                className='font-weight-medium mb-1'
-                style={{
-                  alignItems: 'start',
-                  lineHeight: 1,
-                  rowGap: 4,
-                  wordBreak: 'break-all',
-                }}
-              >
-                <span className='me-2'>
-                  {description ? (
-                    <Tooltip
-                      title={
-                        <span>
-                          {name}
-                          <span className={'ms-1'}></span>
-                          <Icon name='info-outlined' />
-                        </span>
-                      }
-                    >
-                      {description}
-                    </Tooltip>
-                  ) : (
-                    name
-                  )}
-                </span>
-
-                {!!projectFlag.num_segment_overrides && (
-                  <Tooltip
-                    title={
-                      <span
-                        className='chip me-2 chip--xs bg-primary text-white'
-                        style={{ border: 'none' }}
-                      >
-                        <SegmentsIcon className='chip-svg-icon' />
-                        <span>{projectFlag.num_segment_overrides}</span>
-                      </span>
-                    }
-                    place='top'
+              <Row>
+                <Row
+                  className='font-weight-medium'
+                  style={{
+                    lineHeight: 1,
+                    wordBreak: 'break-all',
+                  }}
+                >
+                  <span>
+                    {created_date ? (
+                      <Tooltip place='right' title={<span>{name}</span>}>
+                        {isCompact && description
+                          ? `${description}<br/>Created ${moment(
+                              created_date,
+                            ).format('Do MMM YYYY HH:mma')}`
+                          : `Created ${moment(created_date).format(
+                              'Do MMM YYYY HH:mma',
+                            )}`}
+                      </Tooltip>
+                    ) : (
+                      name
+                    )}
+                  </span>
+                  <Button
+                    onClick={this.copyFeature}
+                    theme='icon'
+                    className='ms-2 me-2'
                   >
-                    {`${projectFlag.num_segment_overrides} Segment Override${
-                      projectFlag.num_segment_overrides !== 1 ? 's' : ''
-                    }`}
-                  </Tooltip>
-                )}
-                {!!projectFlag.num_identity_overrides && (
-                  <Tooltip
-                    title={
-                      <span
-                        className='chip me-2 chip--xs bg-primary text-white'
-                        style={{ border: 'none' }}
-                      >
-                        <UsersIcon className='chip-svg-icon' />
-                        <span>{projectFlag.num_identity_overrides}</span>
-                      </span>
-                    }
-                    place='top'
-                  >
-                    {`${projectFlag.num_identity_overrides} Identity Override${
-                      projectFlag.num_identity_overrides !== 1 ? 's' : ''
-                    }`}
-                  </Tooltip>
-                )}
-                <TagValues
-                  inline
-                  projectId={`${projectId}`}
-                  value={projectFlag.tags}
+                    <Icon name='copy' />
+                  </Button>
+                </Row>
+                <SegmentOverridesIcon
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    this.editFeature(projectFlag, environmentFlags[id], 1)
+                  }}
+                  count={projectFlag.num_segment_overrides}
                 />
+                <IdentityOverridesIcon
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    this.editFeature(projectFlag, environmentFlags[id], 1)
+                  }}
+                  count={projectFlag.num_identity_overrides}
+                />
+                {projectFlag.is_server_key_only && (
+                  <Tooltip
+                    title={
+                      <span
+                        className='chip me-2 chip--xs bg-primary text-white'
+                        style={{ border: 'none' }}
+                      >
+                        <span>{'Server-side only'}</span>
+                      </span>
+                    }
+                    place='top'
+                  >
+                    {
+                      'Prevent this feature from being accessed with client-side SDKs.'
+                    }
+                  </Tooltip>
+                )}
+                <TagValues projectId={`${projectId}`} value={projectFlag.tags}>
+                  {projectFlag.is_archived && (
+                    <Tag className='chip--xs' tag={Constants.archivedTag} />
+                  )}
+                </TagValues>
+                {!!isCompact && (
+                  <StaleFlagWarning projectFlag={projectFlag} />
+                )}
               </Row>
-              <div className='list-item-subtitle'>
-                Created {moment(created_date).format('Do MMM YYYY HH:mma')}
-              </div>
+              {description && !isCompact && (
+                <div
+                  className='list-item-subtitle mt-1'
+                  style={{ lineHeight: '20px', width: width[4] }}
+                >
+                  {description}
+                  <StaleFlagWarning projectFlag={projectFlag} />
+                </div>
+              )}
             </Flex>
           </Row>
         </Flex>
@@ -301,90 +368,52 @@ class TheComponent extends Component {
                 this.editFeature(projectFlag, environmentFlags[id])
                 return
               }
-              this.confirmToggle(
-                projectFlag,
-                environmentFlags[id],
-                (environments) => {
-                  toggleFlag(_.findIndex(projectFlags, { id }), environments)
-                },
-              )
+              this.confirmToggle()
             }}
           />
         </div>
+
         <div
           className='table-column'
-          style={{ width: width[2] }}
+          style={{ width: isCompact ? width[2] : width[3] }}
           onClick={(e) => {
             e.stopPropagation()
           }}
         >
-          {AccountStore.getOrganisationRole() === 'ADMIN' &&
-            !this.props.hideAudit && (
-              <Tooltip
-                html
-                title={
-                  <div
-                    onClick={() => {
-                      this.context.router.history.push(
-                        `/project/${projectId}/environment/${environmentId}/audit-log?env=${environment.id}&search=${projectFlag.name}`,
-                      )
-                    }}
-                    data-test={`feature-history-${this.props.index}`}
-                  >
-                    <Icon name='clock' width={24} fill='#9DA4AE' />
-                  </div>
-                }
-              >
-                Feature history
-              </Tooltip>
-            )}
+          <FeatureAction
+            projectId={projectId}
+            featureIndex={this.props.index}
+            readOnly={readOnly}
+            protectedTags={protectedTags}
+            isCompact={isCompact}
+            hideAudit={
+              AccountStore.getOrganisationRole() !== 'ADMIN' ||
+              this.props.hideAudit
+            }
+            hideRemove={this.props.hideRemove}
+            hideHistory={!environment?.use_v2_feature_versioning}
+            onShowHistory={() => {
+              if (disableControls) return
+              this.context.router.history.push(
+                `/project/${projectId}/environment/${environmentId}/history?feature=${projectFlag.id}`,
+              )
+            }}
+            onShowAudit={() => {
+              if (disableControls) return
+              this.context.router.history.push(
+                `/project/${projectId}/environment/${environmentId}/audit-log?env=${environment.id}&search=${projectFlag.name}`,
+              )
+            }}
+            onRemove={() => {
+              if (disableControls) return
+              this.confirmRemove(projectFlag, () => {
+                removeFlag(projectId, projectFlag)
+              })
+            }}
+            onCopyName={this.copyFeature}
+          />
         </div>
-        <div
-          className='table-column'
-          style={{ width: width[3] }}
-          onClick={(e) => {
-            e.stopPropagation()
-          }}
-        >
-          {!this.props.hideRemove && (
-            <Permission
-              level='project'
-              permission='DELETE_FEATURE'
-              id={projectId}
-            >
-              {({ permission: removeFeaturePermission }) =>
-                Utils.renderWithPermission(
-                  removeFeaturePermission,
-                  Constants.projectPermissions('Delete Feature'),
-                  <Tooltip
-                    html
-                    title={
-                      <Button
-                        disabled={
-                          !removeFeaturePermission || readOnly || isProtected
-                        }
-                        onClick={() =>
-                          this.confirmRemove(projectFlag, () => {
-                            removeFlag(projectId, projectFlag)
-                          })
-                        }
-                        className='btn btn-with-icon'
-                        data-test={`remove-feature-btn-${this.props.index}`}
-                      >
-                        <Icon name='trash-2' width={20} fill='#656D7B' />
-                      </Button>
-                    }
-                  >
-                    {isProtected
-                      ? '<span>This feature has been tagged as <bold>protected</bold>, <bold>permanent</bold>, <bold>do not delete</bold>, or <bold>read only</bold>. Please remove the tag before attempting to delete this flag.</span>'
-                      : 'Remove feature'}
-                  </Tooltip>,
-                )
-              }
-            </Permission>
-          )}
-        </div>
-      </Row>,
+      </Row>
     )
   }
 }

@@ -9,6 +9,7 @@ https://docs.djangoproject.com/en/1.9/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/1.9/ref/settings/
 """
+
 import importlib
 import json
 import os
@@ -21,9 +22,11 @@ import dj_database_url
 import pytz
 import requests
 from corsheaders.defaults import default_headers
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management.utils import get_random_secret_key
 from environs import Env
 
+from app.routers import ReplicaReadStrategy
 from task_processor.task_run_method import TaskRunMethod
 
 env = Env()
@@ -53,20 +56,12 @@ SECRET_KEY = env("DJANGO_SECRET_KEY", default=get_random_secret_key())
 
 HOSTED_SEATS_LIMIT = env.int("HOSTED_SEATS_LIMIT", default=0)
 
-# Google Analytics Configuration
-GOOGLE_ANALYTICS_KEY = env("GOOGLE_ANALYTICS_KEY", default="")
-GOOGLE_SERVICE_ACCOUNT = env("GOOGLE_SERVICE_ACCOUNT", default=None)
-GA_TABLE_ID = env("GA_TABLE_ID", default=None)
+MAX_PROJECTS_IN_FREE_PLAN = 1
 
-INFLUXDB_TOKEN = env.str("INFLUXDB_TOKEN", default="")
-INFLUXDB_BUCKET = env.str("INFLUXDB_BUCKET", default="")
-INFLUXDB_URL = env.str("INFLUXDB_URL", default="")
-INFLUXDB_ORG = env.str("INFLUXDB_ORG", default="")
 
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 USE_X_FORWARDED_HOST = env.bool("USE_X_FORWARDED_HOST", default=False)
 
-USE_POSTGRES_FOR_ANALYTICS = env.bool("USE_POSTGRES_FOR_ANALYTICS", default=False)
 
 CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
 
@@ -117,7 +112,9 @@ INSTALLED_APPS = [
     "environments.identities",
     "environments.identities.traits",
     "features",
+    "features.import_export",
     "features.multivariate",
+    "features.versioning",
     "features.workflows.core",
     "segments",
     "app",
@@ -128,6 +125,7 @@ INSTALLED_APPS = [
     "permissions",
     "projects.tags",
     "api_keys",
+    "features.feature_external_resources",
     # 2FA
     "trench",
     # health check plugins
@@ -148,6 +146,9 @@ INSTALLED_APPS = [
     "integrations.slack",
     "integrations.webhook",
     "integrations.dynatrace",
+    "integrations.flagsmith",
+    "integrations.launch_darkly",
+    "integrations.github",
     # Rate limiting admin endpoints
     "axes",
     "telemetry",
@@ -160,6 +161,8 @@ INSTALLED_APPS = [
     "app_analytics",
 ]
 
+SILENCED_SYSTEM_CHECKS = ["axes.W002"]
+
 SITE_ID = 1
 
 db_conn_max_age = env.int("DJANGO_DB_CONN_MAX_AGE", 60)
@@ -167,6 +170,7 @@ DJANGO_DB_CONN_MAX_AGE = None if db_conn_max_age == -1 else db_conn_max_age
 
 DATABASE_ROUTERS = ["app.routers.PrimaryReplicaRouter"]
 NUM_DB_REPLICAS = 0
+NUM_CROSS_REGION_DB_REPLICAS = 0
 # Allows collectstatic to run without a database, mainly for Docker builds to collectstatic at build time
 if "DATABASE_URL" in os.environ:
     DATABASES = {
@@ -179,8 +183,34 @@ if "DATABASE_URL" in os.environ:
         "REPLICA_DATABASE_URLS", default=[], delimiter=REPLICA_DATABASE_URLS_DELIMITER
     )
     NUM_DB_REPLICAS = len(REPLICA_DATABASE_URLS)
+
+    # Cross region replica databases are used as fallbacks if the
+    # primary replica set becomes unavailable.
+    CROSS_REGION_REPLICA_DATABASE_URLS_DELIMITER = env(
+        "CROSS_REGION_REPLICA_DATABASE_URLS_DELIMITER", ","
+    )
+    CROSS_REGION_REPLICA_DATABASE_URLS = env.list(
+        "CROSS_REGION_REPLICA_DATABASE_URLS",
+        default=[],
+        delimiter=CROSS_REGION_REPLICA_DATABASE_URLS_DELIMITER,
+    )
+    NUM_CROSS_REGION_DB_REPLICAS = len(CROSS_REGION_REPLICA_DATABASE_URLS)
+
+    # DISTRIBUTED spreads the load out across replicas while
+    # SEQUENTIAL only falls back once the first replica connection is faulty
+    REPLICA_READ_STRATEGY = env.enum(
+        "REPLICA_READ_STRATEGY",
+        type=ReplicaReadStrategy,
+        default=ReplicaReadStrategy.DISTRIBUTED.value,
+    )
+
     for i, db_url in enumerate(REPLICA_DATABASE_URLS, start=1):
         DATABASES[f"replica_{i}"] = dj_database_url.parse(
+            db_url, conn_max_age=DJANGO_DB_CONN_MAX_AGE
+        )
+
+    for i, db_url in enumerate(CROSS_REGION_REPLICA_DATABASE_URLS, start=1):
+        DATABASES[f"cross_region_replica_{i}"] = dj_database_url.parse(
             db_url, conn_max_age=DJANGO_DB_CONN_MAX_AGE
         )
 
@@ -217,19 +247,24 @@ elif "DJANGO_DB_NAME" in os.environ:
 
 LOGIN_THROTTLE_RATE = env("LOGIN_THROTTLE_RATE", "20/min")
 SIGNUP_THROTTLE_RATE = env("SIGNUP_THROTTLE_RATE", "10000/min")
+USER_THROTTLE_RATE = env("USER_THROTTLE_RATE", "500/min")
+DEFAULT_THROTTLE_CLASSES = env.list("DEFAULT_THROTTLE_CLASSES", default=[])
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework.authentication.TokenAuthentication",
+        "api_keys.authentication.MasterAPIKeyAuthentication",
     ),
     "PAGE_SIZE": 10,
     "UNICODE_JSON": False,
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "DEFAULT_THROTTLE_CLASSES": DEFAULT_THROTTLE_CLASSES,
     "DEFAULT_THROTTLE_RATES": {
         "login": LOGIN_THROTTLE_RATE,
         "signup": SIGNUP_THROTTLE_RATE,
         "mfa_code": "5/min",
         "invite": "10/min",
+        "user": USER_THROTTLE_RATE,
     },
     "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
     "DEFAULT_RENDERER_CLASSES": [
@@ -248,8 +283,6 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "simple_history.middleware.HistoryRequestMiddleware",
-    # Add master api key object to request
-    "api_keys.middleware.MasterAPIKeyMiddleware",
 ]
 
 ADD_NEVER_CACHE_HEADERS = env.bool("ADD_NEVER_CACHE_HEADERS", True)
@@ -279,17 +312,32 @@ if ENABLE_GZIP_COMPRESSION:
     # ref: https://docs.djangoproject.com/en/2.2/ref/middleware/#middleware-ordering
     MIDDLEWARE.insert(1, "django.middleware.gzip.GZipMiddleware")
 
+# Google Analytics Configuration
+GOOGLE_ANALYTICS_KEY = env("GOOGLE_ANALYTICS_KEY", default="")
+GOOGLE_SERVICE_ACCOUNT = env("GOOGLE_SERVICE_ACCOUNT", default=None)
+GA_TABLE_ID = env("GA_TABLE_ID", default=None)
+
 if GOOGLE_ANALYTICS_KEY:
     MIDDLEWARE.append("app_analytics.middleware.GoogleAnalyticsMiddleware")
 
-if INFLUXDB_TOKEN:
-    MIDDLEWARE.append("app_analytics.middleware.InfluxDBMiddleware")
+# Influx configuration
+INFLUXDB_TOKEN = env.str("INFLUXDB_TOKEN", default="")
+INFLUXDB_BUCKET = env.str("INFLUXDB_BUCKET", default="")
+INFLUXDB_URL = env.str("INFLUXDB_URL", default="")
+INFLUXDB_ORG = env.str("INFLUXDB_ORG", default="")
 
-if USE_POSTGRES_FOR_ANALYTICS:
-    if INFLUXDB_TOKEN:
-        raise RuntimeError("Cannot use both InfluxDB and Postgres for analytics")
+USE_POSTGRES_FOR_ANALYTICS = env.bool("USE_POSTGRES_FOR_ANALYTICS", default=False)
 
-    MIDDLEWARE.append("app_analytics.middleware.APIUsageMiddleware")
+ENABLE_API_USAGE_TRACKING = env.bool("ENABLE_API_USAGE_TRACKING", default=True)
+
+if ENABLE_API_USAGE_TRACKING:
+    # NOTE: Because we use Postgres for analytics data in staging and Influx for tracking SSE data,
+    # we need to support setting the influx configuration alongside using postgres for analytics.
+    if USE_POSTGRES_FOR_ANALYTICS:
+        MIDDLEWARE.append("app_analytics.middleware.APIUsageMiddleware")
+    elif INFLUXDB_TOKEN:
+        MIDDLEWARE.append("app_analytics.middleware.InfluxDBMiddleware")
+
 
 ALLOWED_ADMIN_IP_ADDRESSES = env.list("ALLOWED_ADMIN_IP_ADDRESSES", default=list())
 if len(ALLOWED_ADMIN_IP_ADDRESSES) > 0:
@@ -389,10 +437,25 @@ EMAIL_CONFIGURATION = {
 AWS_SES_REGION_NAME = env("AWS_SES_REGION_NAME", default=None)
 AWS_SES_REGION_ENDPOINT = env("AWS_SES_REGION_ENDPOINT", default=None)
 
-# Used on init to create admin user for the site, update accordingly before hitting /auth/init
-ALLOW_ADMIN_INITIATION_VIA_URL = True
-ADMIN_EMAIL = "admin@example.com"
-ADMIN_INITIAL_PASSWORD = "password"
+# Initialisation settings
+# If `ALLOW_ADMIN_INITIATION_VIA_CLI` setting is set to True, Flagsmith will attempt to create
+#   1. A superuser
+#   2. An organisation
+#   3. A project
+# with initial values on startup.
+# Initialisation is skipped if it's been performed before or if `ALLOW_ADMIN_INITIATION_VIA_CLI` is set to False.
+# Tweak (or set via environment) the settings below for custom names, etc.
+ALLOW_ADMIN_INITIATION_VIA_URL = env.bool(
+    "ALLOW_ADMIN_INITIATION_VIA_URL", default=True
+)
+ALLOW_ADMIN_INITIATION_VIA_CLI = env.bool(
+    "ALLOW_ADMIN_INITIATION_VIA_CLI", default=False
+)
+
+ADMIN_EMAIL = env("ADMIN_EMAIL", default="admin@example.com")
+ORGANISATION_NAME = env("ORGANISATION_NAME", default="Default Organisation")
+PROJECT_NAME = env("PROJECT_NAME", default="Default Project")
+
 
 AUTH_USER_MODEL = "users.FFAdminUser"
 
@@ -422,6 +485,7 @@ if EMAIL_BACKEND == "django.core.mail.backends.smtp.EmailBackend":
     EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
 
 SWAGGER_SETTINGS = {
+    "DEFAULT_AUTO_SCHEMA_CLASS": "api.openapi.PydanticResponseCapableSwaggerAutoSchema",
     "SHOW_REQUEST_HEADERS": True,
     "SECURITY_DEFINITIONS": {
         "Private": {
@@ -443,8 +507,18 @@ SWAGGER_SETTINGS = {
 LOGIN_URL = "/admin/login/"
 LOGOUT_URL = "/admin/logout/"
 
+# Enable E2E tests
+ENABLE_FE_E2E = env.bool("ENABLE_FE_E2E", default=False)
 # Email associated with user that is used by front end for end to end testing purposes
-FE_E2E_TEST_USER_EMAIL = "nightwatch@solidstategroup.com"
+E2E_TEST_EMAIL_DOMAIN = "flagsmithe2etestdomain.io"
+# User email address used for E2E Signup test
+E2E_SIGNUP_USER = f"e2e_signup_user@{E2E_TEST_EMAIL_DOMAIN}"
+# User email address used for Change email E2E test which is part of invite tests
+E2E_CHANGE_EMAIL_USER = f"e2e_change_email@{E2E_TEST_EMAIL_DOMAIN}"
+# User email address used for the rest of the E2E tests
+E2E_USER = f"e2e_user@{E2E_TEST_EMAIL_DOMAIN}"
+#  Identity for E2E segment tests
+E2E_IDENTITY = "test-identity"
 
 # SSL handling in Django
 SECURE_PROXY_SSL_HEADER_NAME = env.str(
@@ -469,18 +543,23 @@ if LOGGING_CONFIGURATION_FILE:
     with open(LOGGING_CONFIGURATION_FILE, "r") as f:
         LOGGING = json.loads(f.read())
 else:
+    LOG_FORMAT = env.str("LOG_FORMAT", default="generic")
     LOG_LEVEL = env.str("LOG_LEVEL", default="WARNING")
     LOGGING = {
         "version": 1,
         "disable_existing_loggers": False,
         "formatters": {
             "generic": {"format": "%(name)-12s %(levelname)-8s %(message)s"},
+            "json": {
+                "()": "util.logging.JsonFormatter",
+                "datefmt": "%Y-%m-%d %H:%M:%S",
+            },
         },
         "handlers": {
             "console": {
                 "level": LOG_LEVEL,
                 "class": "logging.StreamHandler",
-                "formatter": "generic",
+                "formatter": LOG_FORMAT,
             }
         },
         "loggers": {
@@ -501,6 +580,11 @@ else:
                 "propagate": False,
             },
             "app_analytics": {
+                "level": LOG_LEVEL,
+                "handlers": ["console"],
+                "propagate": False,
+            },
+            "webhooks": {
                 "level": LOG_LEVEL,
                 "handlers": ["console"],
                 "propagate": False,
@@ -564,6 +648,12 @@ GET_IDENTITIES_ENDPOINT_CACHE_LOCATION = env.str(
     default=GET_IDENTITIES_ENDPOINT_CACHE_NAME,
 )
 
+BAD_ENVIRONMENTS_CACHE_LOCATION = "bad-environments"
+CACHE_BAD_ENVIRONMENTS_SECONDS = env.int("CACHE_BAD_ENVIRONMENTS_SECONDS", 0)
+CACHE_BAD_ENVIRONMENTS_AFTER_FAILURES = env.int(
+    "CACHE_BAD_ENVIRONMENTS_AFTER_FAILURES", 1
+)
+
 CACHE_PROJECT_SEGMENTS_SECONDS = env.int("CACHE_PROJECT_SEGMENTS_SECONDS", 0)
 PROJECT_SEGMENTS_CACHE_LOCATION = "project-segments"
 
@@ -579,6 +669,31 @@ ENVIRONMENT_SEGMENTS_CACHE_BACKEND = env(
 
 CACHE_ENVIRONMENT_DOCUMENT_SECONDS = env.int("CACHE_ENVIRONMENT_DOCUMENT_SECONDS", 0)
 ENVIRONMENT_DOCUMENT_CACHE_LOCATION = "environment-documents"
+
+USER_THROTTLE_CACHE_NAME = "user-throttle"
+USER_THROTTLE_CACHE_BACKEND = env.str(
+    "USER_THROTTLE_CACHE_BACKEND", "django.core.cache.backends.locmem.LocMemCache"
+)
+USER_THROTTLE_CACHE_LOCATION = env.str("USER_THROTTLE_CACHE_LOCATION", "admin-throttle")
+USER_THROTTLE_CACHE_OPTIONS = env.dict("USER_THROTTLE_CACHE_OPTIONS", default={})
+
+# Using Redis for cache
+# To use Redis for caching, set the cache backend to `django_redis.cache.RedisCache`.
+# and set the cache location to the redis url
+# ref: https://github.com/jazzband/django-redis/tree/5.4.0#configure-as-cache-backend
+
+
+# Avoid raising exceptions if redis is down
+# ref: https://github.com/jazzband/django-redis/tree/5.4.0#memcached-exceptions-behavior
+DJANGO_REDIS_IGNORE_EXCEPTIONS = env.bool(
+    "DJANGO_REDIS_IGNORE_EXCEPTIONS", default=True
+)
+
+# Log exceptions generated by django-redis
+# ref:https://github.com/jazzband/django-redis/tree/5.4.0#log-ignored-exceptions
+DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = env.bool(
+    "DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS", True
+)
 
 CACHES = {
     "default": {
@@ -597,6 +712,11 @@ CACHES = {
     PROJECT_SEGMENTS_CACHE_LOCATION: {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
         "LOCATION": PROJECT_SEGMENTS_CACHE_LOCATION,
+    },
+    BAD_ENVIRONMENTS_CACHE_LOCATION: {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": BAD_ENVIRONMENTS_CACHE_LOCATION,
+        "OPTIONS": {"MAX_ENTRIES": 50},
     },
     CHARGEBEE_CACHE_LOCATION: {
         "BACKEND": "django.core.cache.backends.db.DatabaseCache",
@@ -620,6 +740,11 @@ CACHES = {
         "BACKEND": ENVIRONMENT_SEGMENTS_CACHE_BACKEND,
         "LOCATION": ENVIRONMENT_SEGMENTS_CACHE_LOCATION,
         "TIMEOUT": ENVIRONMENT_SEGMENTS_CACHE_SECONDS,
+    },
+    USER_THROTTLE_CACHE_NAME: {
+        "BACKEND": USER_THROTTLE_CACHE_BACKEND,
+        "LOCATION": USER_THROTTLE_CACHE_LOCATION,
+        "OPTIONS": USER_THROTTLE_CACHE_OPTIONS,
     },
 }
 
@@ -723,6 +848,9 @@ DEFAULT_ORG_STORE_TRAITS_VALUE = env.bool("DEFAULT_ORG_STORE_TRAITS_VALUE", True
 # DynamoDB table name for storing environment
 ENVIRONMENTS_TABLE_NAME_DYNAMO = env.str("ENVIRONMENTS_TABLE_NAME_DYNAMO", None)
 
+# V2 was created to improve storage over overrides data.
+ENVIRONMENTS_V2_TABLE_NAME_DYNAMO = env.str("ENVIRONMENTS_V2_TABLE_NAME_DYNAMO", None)
+
 # DynamoDB table name for storing identities
 IDENTITIES_TABLE_NAME_DYNAMO = env.str("IDENTITIES_TABLE_NAME_DYNAMO", None)
 
@@ -754,12 +882,18 @@ MIXPANEL_API_KEY = env("MIXPANEL_API_KEY", default=None)
 SENTRY_API_KEY = env("SENTRY_API_KEY", default=None)
 AMPLITUDE_API_KEY = env("AMPLITUDE_API_KEY", default=None)
 ENABLE_FLAGSMITH_REALTIME = env.bool("ENABLE_FLAGSMITH_REALTIME", default=False)
+USE_SECURE_COOKIES = env.bool("USE_SECURE_COOKIES", default=True)
+COOKIE_SAME_SITE = env.str("COOKIE_SAME_SITE", default="none")
 
 # Set this to enable create organisation for only superusers
 RESTRICT_ORG_CREATE_TO_SUPERUSERS = env.bool("RESTRICT_ORG_CREATE_TO_SUPERUSERS", False)
 # Slack Integration
 SLACK_CLIENT_ID = env.str("SLACK_CLIENT_ID", default="")
 SLACK_CLIENT_SECRET = env.str("SLACK_CLIENT_SECRET", default="")
+# GitHub integrations
+GITHUB_PEM = env.str("GITHUB_PEM", default="")
+GITHUB_APP_ID: int = env.int("GITHUB_APP_ID", default=0)
+
 
 # MailerLite
 MAILERLITE_BASE_URL = env.str(
@@ -769,8 +903,7 @@ MAILERLITE_API_KEY = env.str("MAILERLITE_API_KEY", None)
 MAILERLITE_NEW_USER_GROUP_ID = env.int("MAILERLITE_NEW_USER_GROUP_ID", None)
 
 # Additional functionality for using SAML in Flagsmith SaaS
-SAML_MODULE_PATH = env("SAML_MODULE_PATH", os.path.join(BASE_DIR, "saml"))
-SAML_INSTALLED = os.path.exists(SAML_MODULE_PATH)
+SAML_INSTALLED = importlib.util.find_spec("saml") is not None
 
 if SAML_INSTALLED:
     SAML_REQUESTS_CACHE_LOCATION = "saml_requests_cache"
@@ -781,19 +914,18 @@ if SAML_INSTALLED:
     INSTALLED_APPS.append("saml")
     SAML_ACCEPTED_TIME_DIFF = env.int("SAML_ACCEPTED_TIME_DIFF", default=60)
     DJOSER["SERIALIZERS"]["current_user"] = "saml.serializers.SamlCurrentUserSerializer"
+    EXTRA_ALLOWED_CANONICALIZATIONS = env.list(
+        "EXTRA_ALLOWED_CANONICALIZATIONS", default=[]
+    )
 
 
-# Additional functionality needed for using workflows in Flagsmith SaaS
-# python module path to the workflows logic module, e.g. "path.to.workflows"
-WORKFLOWS_LOGIC_MODULE_PATH = env(
-    "WORKFLOWS_LOGIC_MODULE_PATH", "features.workflows.logic"
-)
-WORKFLOWS_LOGIC_INSTALLED = (
-    importlib.util.find_spec(WORKFLOWS_LOGIC_MODULE_PATH) is not None
-)
+WORKFLOWS_LOGIC_INSTALLED = importlib.util.find_spec("workflows_logic") is not None
 
 if WORKFLOWS_LOGIC_INSTALLED:
-    INSTALLED_APPS.append(WORKFLOWS_LOGIC_MODULE_PATH)
+    INSTALLED_APPS.append("workflows_logic")
+
+    if importlib.util.find_spec("workflows_logic.stale_flags") is not None:
+        INSTALLED_APPS.append("workflows_logic.stale_flags")
 
 # Additional functionality for restricting authentication to a set of authentication methods in Flagsmith SaaS
 AUTH_CONTROLLER_INSTALLED = importlib.util.find_spec("auth_controller") is not None
@@ -825,9 +957,10 @@ EDGE_ENABLED = (
     and EDGE_RELEASE_DATETIME < datetime.now(tz=pytz.UTC)
 )
 
-DISABLE_WEBHOOKS = env.bool("DISABLE_WEBHOOKS", False)
-
-SERVE_FE_ASSETS = os.path.exists(BASE_DIR + "/app/templates/webpack/index.html")
+DISABLE_FLAGSMITH_UI = env.bool("DISABLE_FLAGSMITH_UI", default=False)
+SERVE_FE_ASSETS = not DISABLE_FLAGSMITH_UI and os.path.exists(
+    BASE_DIR + "/app/templates/webpack/index.html"
+)
 
 # Used to configure the number of application proxies that the API runs behind
 NUM_PROXIES = env.int("NUM_PROXIES", 1)
@@ -840,7 +973,13 @@ MAX_SELF_MIGRATABLE_IDENTITIES = env.int("MAX_SELF_MIGRATABLE_IDENTITIES", 10000
 # Setting to allow asynchronous tasks to be run synchronously for testing purposes
 # or in a separate thread for self-hosted users
 TASK_RUN_METHOD = env.enum(
-    "TASK_RUN_METHOD", type=TaskRunMethod, default=TaskRunMethod.SEPARATE_THREAD.value
+    "TASK_RUN_METHOD",
+    type=TaskRunMethod,
+    default=(
+        TaskRunMethod.TASK_PROCESSOR.value
+        if env.bool("RUN_BY_PROCESSOR", False)
+        else TaskRunMethod.SEPARATE_THREAD.value
+    ),
 )
 ENABLE_TASK_PROCESSOR_HEALTH_CHECK = env.bool(
     "ENABLE_TASK_PROCESSOR_HEALTH_CHECK", default=False
@@ -854,10 +993,23 @@ TASK_DELETE_INCLUDE_FAILED_TASKS = env.bool(
 )
 TASK_DELETE_RUN_TIME = env.time("TASK_DELETE_RUN_TIME", default="01:00")
 TASK_DELETE_RUN_EVERY = env.timedelta("TASK_DELETE_RUN_EVERY", default=86400)
+RECURRING_TASK_RUN_RETENTION_DAYS = env.int(
+    "RECURRING_TASK_RUN_RETENTION_DAYS", default=30
+)
+
+# Webhook settings
+DISABLE_WEBHOOKS = env.bool("DISABLE_WEBHOOKS", False)
+RETRY_WEBHOOKS = TASK_RUN_METHOD == TaskRunMethod.TASK_PROCESSOR
 
 # Real time(server sent events) settings
 SSE_SERVER_BASE_URL = env.str("SSE_SERVER_BASE_URL", None)
 SSE_AUTHENTICATION_TOKEN = env.str("SSE_AUTHENTICATION_TOKEN", None)
+AWS_SSE_LOGS_BUCKET_NAME = env.str("AWS_SSE_LOGS_BUCKET_NAME", None)
+
+RAW_ANALYTICS_DATA_RETENTION_DAYS = env.int("RAW_ANALYTICS_DATA_RETENTION_DAYS", 30)
+BUCKETED_ANALYTICS_DATA_RETENTION_DAYS = env.int(
+    "BUCKETED_ANALYTICS_DATA_RETENTION_DAYS", 90
+)
 
 DISABLE_INVITE_LINKS = env.bool("DISABLE_INVITE_LINKS", False)
 
@@ -886,6 +1038,20 @@ PIPEDRIVE_LEAD_LABEL_EXISTING_CUSTOMER_ID = env(
     "PIPEDRIVE_LEAD_LABEL_EXISTING_CUSTOMER_ID", None
 )
 
+# Hubspot settings
+HUBSPOT_ACCESS_TOKEN = env.str("HUBSPOT_ACCESS_TOKEN", None)
+ENABLE_HUBSPOT_LEAD_TRACKING = env.bool("ENABLE_HUBSPOT_LEAD_TRACKING", False)
+HUBSPOT_IGNORE_DOMAINS = env.list("HUBSPOT_IGNORE_DOMAINS", [])
+HUBSPOT_IGNORE_DOMAINS_REGEX = env("HUBSPOT_IGNORE_DOMAINS_REGEX", "")
+HUBSPOT_IGNORE_ORGANISATION_DOMAINS = env.list(
+    "HUBSPOT_IGNORE_ORGANISATION_DOMAINS", []
+)
+
+# Number of minutes to wait for a user that has signed up to
+# join or create an organisation before creating a lead in
+# hubspot without a Flagsmith organisation.
+CREATE_HUBSPOT_LEAD_WITHOUT_ORGANISATION_DELAY_MINUTES = 30
+
 # List of plan ids that support seat upgrades
 AUTO_SEAT_UPGRADE_PLANS = env.list("AUTO_SEAT_UPGRADE_PLANS", default=[])
 
@@ -903,3 +1069,125 @@ SERIALIZATION_MODULES = {"json": "import_export.json_serializers_with_metadata_s
 DOMAIN_OVERRIDE = env.str("FLAGSMITH_DOMAIN", "")
 # Used when no Django site is specified.
 DEFAULT_DOMAIN = "app.flagsmith.com"
+
+# Define the cooldown duration, in seconds, for password reset emails
+PASSWORD_RESET_EMAIL_COOLDOWN = env.int("PASSWORD_RESET_EMAIL_COOLDOWN", 60 * 60 * 24)
+
+# Limit the count of password reset emails that can be dispatched within the `PASSWORD_RESET_EMAIL_COOLDOWN` timeframe.
+MAX_PASSWORD_RESET_EMAILS = env.int("MAX_PASSWORD_RESET_EMAILS", 5)
+
+FLAGSMITH_ON_FLAGSMITH_SERVER_OFFLINE_MODE = env.bool(
+    "FLAGSMITH_ON_FLAGSMITH_SERVER_OFFLINE_MODE", default=True
+)
+FLAGSMITH_ON_FLAGSMITH_SERVER_KEY = env(
+    "FLAGSMITH_ON_FLAGSMITH_SERVER_KEY", default=None
+)
+FLAGSMITH_ON_FLAGSMITH_SERVER_API_URL = env(
+    "FLAGSMITH_ON_FLAGSMITH_SERVER_API_URL", default=FLAGSMITH_ON_FLAGSMITH_API_URL
+)
+
+FLAGSMITH_ON_FLAGSMITH_FEATURE_EXPORT_ENVIRONMENT_ID = env.int(
+    "FLAGSMITH_ON_FLAGSMITH_FEATURE_EXPORT_ENVIRONMENT_ID",
+    default=None,
+)
+FLAGSMITH_ON_FLAGSMITH_FEATURE_EXPORT_TAG_ID = env.int(
+    "FLAGSMITH_ON_FLAGSMITH_FEATURE_EXPORT_TAG_ID",
+    default=None,
+)
+
+# LDAP setting
+LDAP_INSTALLED = importlib.util.find_spec("flagsmith_ldap")
+# The URL of the LDAP server.
+LDAP_AUTH_URL = env.str("LDAP_AUTH_URL", None)
+
+if LDAP_INSTALLED and LDAP_AUTH_URL:
+    AUTHENTICATION_BACKENDS.insert(0, "django_python3_ldap.auth.LDAPBackend")
+    INSTALLED_APPS.append("flagsmith_ldap")
+
+    # Initiate TLS on connection.
+    LDAP_AUTH_USE_TLS = env.bool("LDAP_AUTH_USE_TLS", False)
+
+    # The LDAP search base for looking up users.
+    LDAP_AUTH_SEARCH_BASE = env.str(
+        "LDAP_AUTH_SEARCH_BASE", "ou=people,dc=example,dc=com"
+    )
+
+    # The LDAP class that represents a user.
+    LDAP_AUTH_OBJECT_CLASS = env.str("LDAP_AUTH_OBJECT_CLASS", "inetOrgPerson")
+
+    # User model fields mapped to the LDAP
+    # attributes that represent them.
+    LDAP_AUTH_USER_FIELDS = env.dict(
+        "LDAP_AUTH_USER_FIELDS",
+        {
+            "username": "uid",
+            "first_name": "givenName",
+            "last_name": "sn",
+            "email": "mail",
+        },
+    )
+    # Sets the login domain for Active Directory users.
+    LDAP_AUTH_ACTIVE_DIRECTORY_DOMAIN = env.str(
+        "LDAP_AUTH_ACTIVE_DIRECTORY_DOMAIN", None
+    )
+
+    # Path to a callable that takes a dict of {model_field_name: value}, and returns
+    # a string of the username to bind to the LDAP server.
+    # Use this to support different types of LDAP server.
+    LDAP_AUTH_FORMAT_USERNAME = env.str(
+        "LDAP_AUTH_FORMAT_USERNAME",
+        "django_python3_ldap.utils.format_username_openldap",
+    )
+
+    # Set connection/receive timeouts (in seconds) on the underlying `ldap3` library.
+    LDAP_AUTH_CONNECT_TIMEOUT = env.int("LDAP_AUTH_CONNECT_TIMEOUT", None)
+    LDAP_AUTH_RECEIVE_TIMEOUT = env.int("LDAP_AUTH_RECEIVE_TIMEOUT", None)
+
+    # Set this to add newly created users to an organisation
+    LDAP_DEFAULT_FLAGSMITH_ORGANISATION_ID = env.int(
+        "LDAP_DEFAULT_FLAGSMITH_ORGANISATION_ID", None
+    )
+
+    # Path to a callable that takes a user model, a dict of {ldap_field_name: [value]}
+    # a LDAP connection object (to allow further lookups), and saves any additional
+    # user relationships based on the LDAP data.
+    LDAP_AUTH_SYNC_USER_RELATIONS = env.str(
+        "LDAP_AUTH_SYNC_USER_RELATIONS", "django_python3_ldap.utils.sync_user_relations"
+    )
+
+    # Path to a callable that takes a dict of {ldap_field_name: value},
+    # returning a list of [ldap_search_filter]. The search filters will then be AND'd
+    # together when creating the final search filter.
+    LDAP_AUTH_FORMAT_SEARCH_FILTERS = env.str(
+        "LDAP_AUTH_FORMAT_SEARCH_FILTERS",
+        default="django_python3_ldap.utils.format_search_filters",
+    )
+
+    # List of LDAP group DN's that needs to be synced.
+    LDAP_SYNCED_GROUPS = env.list("LDAP_SYNCED_GROUPS", default=[], delimiter=":")
+
+    # DN of the LDAP group that is allowed to login
+    # If None no group check will be performed.
+    LDAP_LOGIN_GROUP = env.str("LDAP_LOGIN_GROUP", None)
+
+    # The LDAP user username and password used by `sync_ldap_users_and_groups` command
+    LDAP_SYNC_USER_USERNAME = env.str("LDAP_SYNC_USER_USERNAME", None)
+    LDAP_SYNC_USER_PASSWORD = env.str("LDAP_SYNC_USER_PASSWORD", None)
+
+SEGMENT_CONDITION_VALUE_LIMIT = env.int("SEGMENT_CONDITION_VALUE_LIMIT", default=1000)
+if not 0 <= SEGMENT_CONDITION_VALUE_LIMIT < 2000000:
+    raise ImproperlyConfigured(
+        "SEGMENT_CONDITION_VALUE_LIMIT must be between 0 and 2,000,000 (2MB)."
+    )
+
+SEGMENT_RULES_CONDITIONS_LIMIT = env.int("SEGMENT_RULES_CONDITIONS_LIMIT", 100)
+
+WEBHOOK_BACKOFF_BASE = env.int("WEBHOOK_BACKOFF_BASE", default=2)
+WEBHOOK_BACKOFF_RETRIES = env.int("WEBHOOK_BACKOFF_RETRIES", default=3)
+
+# Split Testing settings
+SPLIT_TESTING_INSTALLED = importlib.util.find_spec("split_testing")
+if SPLIT_TESTING_INSTALLED:
+    INSTALLED_APPS += ("split_testing",)
+
+ENABLE_API_USAGE_ALERTING = env.bool("ENABLE_API_USAGE_ALERTING", default=False)

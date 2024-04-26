@@ -5,10 +5,11 @@ import Constants from 'common/constants'
 
 export const themeClassNames = {
   danger: 'btn btn-danger',
+  icon: 'btn-icon',
   outline: 'btn--outline',
   primary: 'btn-primary',
   project: 'btn-project',
-  secondary: 'btn-secondary',
+  secondary: 'btn btn-secondary',
   tertiary: 'btn-tertiary',
   text: 'btn-link',
 }
@@ -53,6 +54,13 @@ export const Button: FC<ButtonType> = ({
       href={href}
       rel='noreferrer'
     >
+      {!!iconLeft && (
+        <Icon
+          fill={iconLeftColour ? Constants.colours[iconLeftColour] : undefined}
+          className='me-2'
+          name={iconLeft}
+        />
+      )}
       {children}
     </a>
   ) : (
@@ -70,7 +78,7 @@ export const Button: FC<ButtonType> = ({
       {!!iconLeft && (
         <Icon
           fill={iconLeftColour ? Constants.colours[iconLeftColour] : undefined}
-          className='mr-1'
+          className='mr-2'
           name={iconLeft}
         />
       )}

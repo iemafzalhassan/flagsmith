@@ -2,13 +2,14 @@ import DatePicker from 'react-datepicker'
 import Icon from './Icon'
 import { useState } from 'react'
 
-const DateSelect = ({ onChange, onSelect, selected, value }) => {
+const DateSelect = ({ dateFormat, onChange, onSelect, selected, value }) => {
   const [isMonthPicker, setMonthPicker] = useState(false)
   const [isYearPicker, setYearPicker] = useState(false)
   const [isOpen, setOpen] = useState(false)
   return (
     <Flex style={{ position: 'relative' }}>
       <DatePicker
+        dateFormat={dateFormat}
         renderCustomHeader={({
           date,
           decreaseMonth,
@@ -102,7 +103,7 @@ const DateSelect = ({ onChange, onSelect, selected, value }) => {
         open={isOpen}
       />
       <span className='calendar-icon'>
-        <Icon name='calendar' />
+        <Icon name='calendar' fill={isOpen ? '#1A2634' : '#9DA4AE'} />
       </span>
     </Flex>
   )

@@ -2,35 +2,37 @@
 from __future__ import unicode_literals
 
 import logging
-from datetime import datetime
 
 from app_analytics.influxdb_wrapper import (
     get_events_for_organisation,
     get_multiple_event_list_for_organisation,
 )
-from django.contrib.sites.shortcuts import get_current_site
+from core.helpers import get_current_site_url
+from dateutil.relativedelta import relativedelta
+from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.authentication import BasicAuthentication
 from rest_framework.decorators import action, api_view, authentication_classes
 from rest_framework.exceptions import ValidationError
+from rest_framework.generics import ListAPIView
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 
-from organisations.exceptions import (
-    OrganisationHasNoSubscription,
-    SubscriptionNotFound,
-)
+from organisations.chargebee import webhook_event_types, webhook_handlers
+from organisations.exceptions import OrganisationHasNoPaidSubscription
 from organisations.models import (
+    OranisationAPIUsageNotification,
     Organisation,
     OrganisationRole,
     OrganisationWebhook,
-    Subscription,
 )
 from organisations.permissions.models import OrganisationPermissionModel
 from organisations.permissions.permissions import (
     NestedOrganisationEntityPermission,
+    OrganisationAPIUsageNotificationPermission,
     OrganisationPermission,
 )
 from organisations.serializers import (
@@ -49,10 +51,12 @@ from permissions.serializers import (
     PermissionModelSerializer,
     UserObjectPermissionsSerializer,
 )
-from projects.serializers import ProjectSerializer
+from projects.serializers import ProjectListSerializer
 from users.serializers import UserIdSerializer
 from webhooks.mixins import TriggerSampleWebhookMixin
 from webhooks.webhooks import WebhookType
+
+from .serializers import OrganisationAPIUsageNotificationSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +122,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     def projects(self, request, pk):
         organisation = self.get_object()
         projects = organisation.projects.all()
-        return Response(ProjectSerializer(projects, many=True).data)
+        return Response(ProjectListSerializer(projects, many=True).data)
 
     @action(detail=True, methods=["POST"])
     def invite(self, request, pk):
@@ -179,9 +183,6 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     )
     def get_subscription_metadata(self, request, pk):
         organisation = self.get_object()
-        if not organisation.has_subscription():
-            raise SubscriptionNotFound()
-
         subscription_details = organisation.subscription.get_subscription_metadata()
         serializer = self.get_serializer(instance=subscription_details)
         return Response(serializer.data)
@@ -189,9 +190,9 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["GET"], url_path="portal-url")
     def get_portal_url(self, request, pk):
         organisation = self.get_object()
-        if not organisation.has_subscription():
-            raise OrganisationHasNoSubscription()
-        redirect_url = get_current_site(request)
+        if not organisation.has_paid_subscription():
+            raise OrganisationHasNoPaidSubscription()
+        redirect_url = get_current_site_url(request)
         serializer = self.get_serializer(
             data={"url": organisation.subscription.get_portal_url(redirect_url)}
         )
@@ -205,8 +206,8 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     )
     def get_hosted_page_url_for_subscription_upgrade(self, request, pk):
         organisation = self.get_object()
-        if not organisation.has_subscription():
-            raise OrganisationHasNoSubscription()
+        if not organisation.has_paid_subscription():
+            raise OrganisationHasNoPaidSubscription()
         serializer = self.get_serializer(
             data={
                 "subscription_id": organisation.subscription.subscription_id,
@@ -257,9 +258,14 @@ class OrganisationViewSet(viewsets.ModelViewSet):
 
 @api_view(["POST"])
 @authentication_classes([BasicAuthentication])
-def chargebee_webhook(request):
+def chargebee_webhook(request: Request) -> Response:
     """
     Endpoint to handle webhooks from chargebee.
+
+    Payment failure and payment succeeded webhooks are filtered out and processed
+    to determine which of our subscriptions are in a dunning state.
+
+    The remaining webhooks are processed if they have subscription data:
 
      - If subscription is active, check to see if plan has changed and update if so. Always update cancellation date to
        None to ensure that if a subscription is reactivated, it is updated on our end.
@@ -267,33 +273,17 @@ def chargebee_webhook(request):
      - If subscription is cancelled or not renewing, update subscription on our end to include cancellation date and
        send alert to admin users.
     """
+    event_type = request.data.get("event_type")
 
-    if request.data.get("content") and "subscription" in request.data.get("content"):
-        subscription_data = request.data["content"]["subscription"]
+    if event_type == webhook_event_types.PAYMENT_FAILED:
+        return webhook_handlers.payment_failed(request)
+    if event_type == webhook_event_types.PAYMENT_SUCCEEDED:
+        return webhook_handlers.payment_succeeded(request)
+    if event_type in webhook_event_types.CACHE_REBUILD_TYPES:
+        return webhook_handlers.cache_rebuild_event(request)
 
-        try:
-            existing_subscription = Subscription.objects.get(
-                subscription_id=subscription_data.get("id")
-            )
-        except (Subscription.DoesNotExist, Subscription.MultipleObjectsReturned):
-            error_message = (
-                "Couldn't get unique subscription for ChargeBee id %s"
-                % subscription_data.get("id")
-            )
-            logger.error(error_message)
-            return Response(status=status.HTTP_200_OK)
-
-        subscription_status = subscription_data.get("status")
-        if subscription_status == "active":
-            if subscription_data.get("plan_id") != existing_subscription.plan:
-                existing_subscription.update_plan(subscription_data.get("plan_id"))
-        elif subscription_status in ("non_renewing", "cancelled"):
-            existing_subscription.cancel(
-                datetime.fromtimestamp(subscription_data.get("current_term_end")),
-                update_chargebee=False,
-            )
-
-    return Response(status=status.HTTP_200_OK)
+    # Catchall handlers for finding subscription related processing data.
+    return webhook_handlers.process_subscription(request)
 
 
 class OrganisationWebhookViewSet(viewsets.ModelViewSet, TriggerSampleWebhookMixin):
@@ -320,3 +310,26 @@ class OrganisationWebhookViewSet(viewsets.ModelViewSet, TriggerSampleWebhookMixi
     def perform_create(self, serializer):
         organisation_id = self.kwargs["organisation_pk"]
         serializer.save(organisation_id=organisation_id)
+
+
+class OrganisationAPIUsageNotificationView(ListAPIView):
+    serializer_class = OrganisationAPIUsageNotificationSerializer
+    permission_classes = [OrganisationAPIUsageNotificationPermission]
+
+    def get_queryset(self):
+        organisation = Organisation.objects.get(id=self.kwargs["organisation_pk"])
+        if not hasattr(organisation, "subscription_information_cache"):
+            return OranisationAPIUsageNotification.objects.none()
+        subscription_cache = organisation.subscription_information_cache
+        billing_starts_at = subscription_cache.current_billing_term_starts_at
+        now = timezone.now()
+
+        month_delta = relativedelta(now, billing_starts_at).months
+        period_starts_at = relativedelta(months=month_delta) + billing_starts_at
+
+        queryset = OranisationAPIUsageNotification.objects.filter(
+            organisation_id=organisation.id,
+            notified_at__gt=period_starts_at,
+        )
+
+        return queryset.order_by("-percent_usage")[:1]

@@ -2,10 +2,11 @@ import React, { Component } from 'react'
 import ChangeRequestStore from 'common/stores/change-requests-store'
 import OrganisationStore from 'common/stores/organisation-store'
 import ConfigProvider from 'common/providers/ConfigProvider'
-import PaymentModal from 'components/modals/Payment'
 import JSONReference from 'components/JSONReference'
 import InfoMessage from 'components/InfoMessage'
 import Icon from 'components/Icon'
+import PageTitle from 'components/PageTitle'
+import { Link } from 'react-router-dom'
 
 const ChangeRequestsPage = class extends Component {
   static displayName = 'ChangeRequestsPage'
@@ -61,8 +62,10 @@ const ChangeRequestsPage = class extends Component {
         id='change-requests-page'
         className='app-container container'
       >
+        <PageTitle title={'Scheduling'}>
+          Manage feature state changes that have been scheduled to go live.
+        </PageTitle>
         <Flex>
-          <h4>Scheduled Changes</h4>
           {
             <div>
               {!hasSchedulePlan ? (
@@ -70,19 +73,8 @@ const ChangeRequestsPage = class extends Component {
                   <InfoMessage>
                     Schedule feature state changes with a Change Request flow
                     with our{' '}
-                    <Button
-                      theme='text'
-                      onClick={() => {
-                        openModal(
-                          'Payment plans',
-                          <PaymentModal viewOnly={false} />,
-                          'modal-lg',
-                        )
-                      }}
-                    >
-                      Start-up plan
-                    </Button>
-                    . Find out more{' '}
+                    <Link to='/organisation-settings'>Start-up plan</Link>. Find
+                    out more{' '}
                     <Button
                       theme='text'
                       href='https://docs.flagsmith.com/advanced-use/scheduled-flags#creating-a-stand-alone-scheduled-flag-change'
@@ -95,15 +87,11 @@ const ChangeRequestsPage = class extends Component {
                 </div>
               ) : (
                 <>
-                  <p>
-                    Manage feature state changes that have been scheduled to go
-                    live.
-                  </p>
                   <PanelSearch
                     renderSearchWithNoResults
                     id='users-list'
                     title='Scheduled Changes'
-                    className='mt-4 no-pad'
+                    className='no-pad'
                     isLoading={
                       ChangeRequestStore.isLoading ||
                       !dataScheduled ||
@@ -152,8 +140,8 @@ const ChangeRequestsPage = class extends Component {
                         >
                           <Flex className='table-column px-3'>
                             <div className='font-weight-medium'>{title}</div>
-                            <div className='list-item-subtitle'>
-                              Created at{' '}
+                            <div className='list-item-subtitle mt-1'>
+                              Created{' '}
                               {moment(created_at).format('Do MMM YYYY HH:mma')}{' '}
                               by {user && user.first_name}{' '}
                               {user && user.last_name}

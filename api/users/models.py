@@ -1,5 +1,6 @@
 import logging
 import typing
+from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth.base_user import BaseUserManager
@@ -7,11 +8,13 @@ from django.contrib.auth.models import AbstractUser
 from django.core.mail import send_mail
 from django.db import models
 from django.db.models import Count, QuerySet
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django_lifecycle import AFTER_CREATE, LifecycleModel, hook
 
-from environments.models import Environment
-from environments.permissions.models import UserEnvironmentPermission
+from integrations.lead_tracking.hubspot.tasks import (
+    track_hubspot_lead_without_organisation,
+)
 from organisations.models import (
     Organisation,
     OrganisationRole,
@@ -28,13 +31,15 @@ from permissions.permission_service import (
     is_user_project_admin,
     user_has_organisation_permission,
 )
-from projects.models import Project, UserProjectPermission
+from projects.models import Project
+from users.abc import UserABC
 from users.auth_type import AuthType
 from users.constants import DEFAULT_DELETE_ORPHAN_ORGANISATIONS_VALUE
 from users.exceptions import InvalidInviteError
 from users.utils.mailer_lite import MailerLite
 
 if typing.TYPE_CHECKING:
+    from environments.models import Environment
     from organisations.invites.models import (
         AbstractBaseInviteModel,
         Invite,
@@ -122,6 +127,17 @@ class FFAdminUser(LifecycleModel, AbstractUser):
     def subscribe_to_mailing_list(self):
         mailer_lite.subscribe(self)
 
+    @hook(AFTER_CREATE)
+    def schedule_hubspot_tracking(self) -> None:
+        if settings.ENABLE_HUBSPOT_LEAD_TRACKING:
+            track_hubspot_lead_without_organisation.delay(
+                kwargs={"user_id": self.id},
+                delay_until=timezone.now()
+                + timedelta(
+                    minutes=settings.CREATE_HUBSPOT_LEAD_WITHOUT_ORGANISATION_DELAY_MINUTES
+                ),
+            )
+
     def delete_orphan_organisations(self):
         Organisation.objects.filter(
             id__in=self.organisations.values_list("id", flat=True)
@@ -134,6 +150,10 @@ class FFAdminUser(LifecycleModel, AbstractUser):
         if delete_orphan_organisations:
             self.delete_orphan_organisations()
         super().delete()
+
+    def set_password(self, raw_password):
+        super().set_password(raw_password)
+        self.password_reset_requests.all().delete()
 
     @property
     def auth_type(self):
@@ -157,6 +177,15 @@ class FFAdminUser(LifecycleModel, AbstractUser):
         if not self.first_name:
             return None
         return " ".join([self.first_name, self.last_name]).strip()
+
+    def can_send_password_reset_email(self) -> bool:
+        limit = timezone.now() - timezone.timedelta(
+            seconds=settings.PASSWORD_RESET_EMAIL_COOLDOWN
+        )
+        return (
+            self.password_reset_requests.filter(requested_at__gte=limit).count()
+            < settings.MAX_PASSWORD_RESET_EMAILS
+        )
 
     def join_organisation_from_invite_email(self, invite_email: "Invite"):
         if invite_email.email.lower() != self.email.lower():
@@ -202,11 +231,9 @@ class FFAdminUser(LifecycleModel, AbstractUser):
 
     def remove_organisation(self, organisation):
         UserOrganisation.objects.filter(user=self, organisation=organisation).delete()
-        UserProjectPermission.objects.filter(
-            user=self, project__organisation=organisation
-        ).delete()
-        UserEnvironmentPermission.objects.filter(
-            user=self, environment__project__organisation=organisation
+        self.project_permissions.filter(project__organisation=organisation).delete()
+        self.environment_permissions.filter(
+            environment__project__organisation=organisation
         ).delete()
         self.permission_groups.remove(*organisation.permission_groups.all())
 
@@ -223,36 +250,61 @@ class FFAdminUser(LifecycleModel, AbstractUser):
     def get_user_organisation(
         self, organisation: typing.Union["Organisation", int]
     ) -> UserOrganisation:
+        organisation_id = getattr(organisation, "id", organisation)
+
         try:
-            return self.userorganisation_set.get(organisation=organisation)
-        except UserOrganisation.DoesNotExist:
+            # Since the user list view relies on this data, we prefetch it in
+            # the queryset, hence we can't use `userorganisation_set.get()`
+            # and instead use this next(filter()) approach. Since most users
+            # won't have more than ~1 organisation, we can accept the performance
+            # hit in the case that we are only getting the organisation for a
+            # single user.
+            return next(
+                filter(
+                    lambda uo: uo.organisation_id == organisation_id,
+                    self.userorganisation_set.all(),
+                )
+            )
+        except StopIteration:
             logger.warning(
-                "User %d is not part of organisation %d"
-                % (self.id, getattr(organisation, "id", organisation))
+                "User %d is not part of organisation %d" % (self.id, organisation_id)
             )
 
-    def get_permitted_projects(self, permission_key: str) -> QuerySet[Project]:
-        return get_permitted_projects_for_user(self, permission_key)
+    def get_permitted_projects(
+        self, permission_key: str, tag_ids: typing.List[int] = None
+    ) -> QuerySet[Project]:
+        return get_permitted_projects_for_user(self, permission_key, tag_ids)
 
-    def has_project_permission(self, permission: str, project: Project) -> bool:
+    def has_project_permission(
+        self, permission: str, project: Project, tag_ids: typing.List[int] = None
+    ) -> bool:
         if self.is_project_admin(project):
             return True
-        return project in self.get_permitted_projects(permission)
+        return project in self.get_permitted_projects(permission, tag_ids=tag_ids)
 
     def has_environment_permission(
-        self, permission: str, environment: Environment
+        self,
+        permission: str,
+        environment: "Environment",
+        tag_ids: typing.List[int] = None,
     ) -> bool:
         return environment in self.get_permitted_environments(
-            permission, environment.project
+            permission, environment.project, tag_ids=tag_ids
         )
 
     def is_project_admin(self, project: Project) -> bool:
         return is_user_project_admin(self, project)
 
     def get_permitted_environments(
-        self, permission_key: str, project: Project
-    ) -> QuerySet[Environment]:
-        return get_permitted_environments_for_user(self, project, permission_key)
+        self,
+        permission_key: str,
+        project: Project,
+        tag_ids: typing.List[int] = None,
+        prefetch_metadata: bool = False,
+    ) -> QuerySet["Environment"]:
+        return get_permitted_environments_for_user(
+            self, project, permission_key, tag_ids, prefetch_metadata=prefetch_metadata
+        )
 
     @staticmethod
     def send_alert_to_admin_users(subject, message):
@@ -278,7 +330,7 @@ class FFAdminUser(LifecycleModel, AbstractUser):
 
     def is_environment_admin(
         self,
-        environment: Environment,
+        environment: "Environment",
     ) -> bool:
         return is_user_environment_admin(self, environment)
 
@@ -310,6 +362,12 @@ class FFAdminUser(LifecycleModel, AbstractUser):
         ).update(group_admin=False)
 
 
+# Since we can't enforce FFAdminUser to implement the  UserABC interface using inheritance
+# we use __subclasshook__[1] method on UserABC to check if FFAdminUser implements the required interface
+# [1]https://docs.python.org/3/library/abc.html#abc.ABCMeta.__subclasshook__
+assert issubclass(FFAdminUser, UserABC)
+
+
 class UserPermissionGroupMembership(models.Model):
     userpermissiongroup = models.ForeignKey(
         "users.UserPermissionGroup",
@@ -338,6 +396,7 @@ class UserPermissionGroup(models.Model):
     organisation = models.ForeignKey(
         Organisation, on_delete=models.CASCADE, related_name="permission_groups"
     )
+    ldap_dn = models.CharField(blank=True, null=True, unique=True, max_length=255)
     is_default = models.BooleanField(
         default=False,
         help_text="If set to true, all new users will be added to this group",
@@ -367,3 +426,14 @@ class UserPermissionGroup(models.Model):
 
     def remove_users_by_id(self, user_ids: list):
         self.users.remove(*user_ids)
+
+
+class HubspotLead(models.Model):
+    user = models.OneToOneField(
+        FFAdminUser,
+        related_name="hubspot_lead",
+        on_delete=models.CASCADE,
+    )
+    hubspot_id = models.CharField(unique=True, max_length=100, null=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)

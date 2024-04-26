@@ -113,6 +113,7 @@ class SDKTraitsDeprecated(SDKAPIView):
     # API to handle /api/v1/identities/<identifier>/traits/<trait_key> endpoints
     # if Identity or Trait does not exist it will create one, otherwise will fetch existing
     serializer_class = TraitSerializerBasic
+    throttle_classes = []
 
     schema = None
 
@@ -181,6 +182,7 @@ class SDKTraitsDeprecated(SDKAPIView):
 class SDKTraits(mixins.CreateModelMixin, viewsets.GenericViewSet):
     permission_classes = (EnvironmentKeyPermissions, TraitPersistencePermissions)
     authentication_classes = (EnvironmentKeyAuthentication,)
+    throttle_classes = []
 
     def get_serializer_class(self):
         if self.action == "increment_value":

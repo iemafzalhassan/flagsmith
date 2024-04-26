@@ -1,11 +1,11 @@
 import React, { Component } from 'react'
-import Tabs from './base/forms/Tabs'
-import TabItem from './base/forms/TabItem'
 import Highlight from './Highlight'
 import ConfigProvider from 'common/providers/ConfigProvider'
 import Constants from 'common/constants'
 import { Clipboard } from 'polyfill-react-native'
 import Icon from './Icon'
+import { logoGithub, document } from 'ionicons/icons'
+import { IonIcon } from '@ionic/react'
 
 const getGithubLink = (key) => {
   switch (key) {
@@ -92,18 +92,23 @@ const CodeHelp = class extends Component {
 
   copy = (s) => {
     const res = Clipboard.setString(s)
-    toast(res ? 'Clipboard set' : 'Could not set clipboard :(')
+    toast(
+      res ? 'Clipboard set' : 'Could not set clipboard :(',
+      res ? '' : 'danger',
+    )
   }
 
   render() {
     const { hideHeader } = this.props
-    const language =
+    let language =
       this.state.language ||
       flagsmith.getTrait('preferred_language') ||
       Object.keys(this.props.snippets)[0]
+    // A snippet might not be available for the code help, in which case match the index or set to the first one
     const tab = language
       ? Math.max(Object.keys(this.props.snippets).indexOf(language), 0)
       : 0
+    language = Object.keys(this.props.snippets)[tab]
     return (
       <div>
         {!hideHeader && (
@@ -142,34 +147,6 @@ const CodeHelp = class extends Component {
             )}
 
             <div className='code-help'>
-              <Select
-                data-test='select-segment'
-                placeholder='Select a language'
-                value={{
-                  label: language,
-                }}
-                onChange={(v) => {
-                  const lang = v.label
-                  this.setState({ language: lang })
-                  flagsmith.setTrait('preferred_language', lang)
-                  this.setState({ tab })
-                }}
-                options={_.sortBy(Object.keys(this.props.snippets), (key) =>
-                  key[0].toLowerCase(),
-                ).map((v, i) => ({
-                  label: v,
-                  value: i,
-                }))}
-                styles={{
-                  control: (base) => ({
-                    ...base,
-                    '&:hover': { borderColor: '$bt-brand-secondary' },
-                    alignSelf: 'flex-end',
-                    border: '1px solid $bt-brand-secondary',
-                    width: 200,
-                  }),
-                }}
-              />
               {_.map(this.props.snippets, (s, key) => {
                 const docs = getDocsLink(key)
                 const github = getGithubLink(key)
@@ -179,6 +156,35 @@ const CodeHelp = class extends Component {
                       key !== language ? 'd-none' : 'hljs-container mt-2 mb-2'
                     }
                   >
+                    <Select
+                      data-test='select-segment'
+                      placeholder='Select a language'
+                      value={{
+                        label: language,
+                      }}
+                      onChange={(v) => {
+                        const lang = v.label
+                        this.setState({ language: lang })
+                        flagsmith.setTrait('preferred_language', lang)
+                        this.setState({ tab })
+                      }}
+                      options={_.sortBy(
+                        Object.keys(this.props.snippets),
+                        (key) => key[0].toLowerCase(),
+                      ).map((v, i) => ({
+                        label: v,
+                        value: i,
+                      }))}
+                      styles={{
+                        control: (base) => ({
+                          ...base,
+                          '&:hover': { borderColor: '$bt-brand-secondary' },
+                          alignSelf: 'flex-end',
+                          border: '1px solid $bt-brand-secondary',
+                          width: 200,
+                        }),
+                      }}
+                    />
                     <Highlight
                       forceExpanded
                       preventEscape
@@ -203,7 +209,13 @@ const CodeHelp = class extends Component {
                           className='btn btn-primary'
                           size='xSmall'
                         >
-                          <span className='icon ion ion-ios-document' /> {key}{' '}
+                          <span
+                            className='icon ion'
+                            style={{ marginRight: '2px' }}
+                          >
+                            <IonIcon icon={document} />
+                          </span>
+                          {key}
                           Docs
                         </Button>
                       )}
@@ -214,8 +226,13 @@ const CodeHelp = class extends Component {
                           className='btn btn-primary'
                           size='xSmall'
                         >
-                          <span className='icon ion ion-logo-github' /> {key}{' '}
-                          GitHub
+                          <span
+                            className='icon ion'
+                            style={{ marginRight: '2px' }}
+                          >
+                            <IonIcon icon={logoGithub} />
+                          </span>
+                          {key} GitHub
                         </Button>
                       )}
                     </Column>

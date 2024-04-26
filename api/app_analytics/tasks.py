@@ -35,8 +35,55 @@ if settings.USE_POSTGRES_FOR_ANALYTICS:
         populate_feature_evaluation_bucket(bucket_size, run_every, source_bucket_size)
 
 
+@register_recurring_task(
+    run_every=timedelta(days=1),
+)
+def clean_up_old_analytics_data():
+    # delete raw analytics data older than `RAW_ANALYTICS_DATA_RETENTION_DAYS`
+    APIUsageRaw.objects.filter(
+        created_at__lt=timezone.now()
+        - timedelta(days=settings.RAW_ANALYTICS_DATA_RETENTION_DAYS)
+    ).delete()
+    FeatureEvaluationRaw.objects.filter(
+        created_at__lt=timezone.now()
+        - timedelta(days=settings.RAW_ANALYTICS_DATA_RETENTION_DAYS)
+    ).delete()
+
+    # delete bucketed analytics data older than `BUCKETED_ANALYTICS_DATA_RETENTION_DAYS`
+    APIUsageBucket.objects.filter(
+        created_at__lt=timezone.now()
+        - timedelta(days=settings.BUCKETED_ANALYTICS_DATA_RETENTION_DAYS)
+    ).delete()
+
+    FeatureEvaluationBucket.objects.filter(
+        created_at__lt=timezone.now()
+        - timedelta(days=settings.BUCKETED_ANALYTICS_DATA_RETENTION_DAYS)
+    ).delete()
+
+
 @register_task_handler()
-def track_feature_evaluation(environment_id, feature_evaluations):
+def track_feature_evaluation_v2(
+    environment_id: int, feature_evaluations: list[dict[str, int | str | bool]]
+) -> None:
+    feature_evaluation_objects = []
+    for feature_evaluation in feature_evaluations:
+        feature_evaluation_objects.append(
+            FeatureEvaluationRaw(
+                environment_id=environment_id,
+                feature_name=feature_evaluation["feature_name"],
+                evaluation_count=feature_evaluation["count"],
+                identity_identifier=feature_evaluation["identity_identifier"],
+                enabled_when_evaluated=feature_evaluation["enabled_when_evaluated"],
+            )
+        )
+    FeatureEvaluationRaw.objects.bulk_create(feature_evaluation_objects)
+
+
+@register_task_handler()
+def track_feature_evaluation(
+    environment_id: int,
+    feature_evaluations: dict[str, int],
+) -> None:
     feature_evaluation_objects = []
     for feature_name, evaluation_count in feature_evaluations.items():
         feature_evaluation_objects.append(

@@ -1,7 +1,9 @@
 import typing
+from datetime import timedelta
 
 import pytest
 from django.db.utils import IntegrityError
+from django.utils import timezone
 
 from organisations.invites.exceptions import InviteLinksDisabledError
 from organisations.invites.models import Invite, InviteLink
@@ -10,6 +12,51 @@ from organisations.models import Organisation
 if typing.TYPE_CHECKING:
     from django.core.mail import EmailMessage
     from pytest_django.fixtures import SettingsWrapper
+
+
+def test_invite_link_is_expired_expiry_date_in_past(
+    organisation: Organisation,
+) -> None:
+    # Given
+    yesterday = timezone.now() - timedelta(days=1)
+    expired_link = InviteLink.objects.create(
+        organisation=organisation, expires_at=yesterday
+    )
+
+    # When
+    is_expired = expired_link.is_expired
+
+    # Then
+    assert is_expired
+
+
+def test_invite_link_is_expired_expiry_date_in_future(
+    organisation: Organisation,
+) -> None:
+    # Given
+    tomorrow = timezone.now() + timedelta(days=1)
+    expired_link = InviteLink.objects.create(
+        organisation=organisation, expires_at=tomorrow
+    )
+
+    # When
+    is_expired = expired_link.is_expired
+
+    # Then
+    assert not is_expired
+
+
+def test_invite_link_is_expired_no_expiry_date(
+    organisation: Organisation,
+) -> None:
+    # Given
+    expired_link = InviteLink.objects.create(organisation=organisation, expires_at=None)
+
+    # When
+    is_expired = expired_link.is_expired
+
+    # Then
+    assert not is_expired
 
 
 @pytest.mark.django_db

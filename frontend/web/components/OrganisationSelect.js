@@ -1,6 +1,4 @@
 import React, { Component } from 'react'
-import cx from 'classnames'
-import NavLink from 'react-router-dom/NavLink'
 
 const OrganisationSelect = class extends Component {
   static displayName = 'OrganisationSelect'
@@ -10,52 +8,46 @@ const OrganisationSelect = class extends Component {
     this.state = {}
   }
 
+  componentDidMount() {
+    if (localStorage.lastEnv) {
+      const orgId = JSON.parse(localStorage.lastEnv).orgId
+      if (this.props.firstOrganisation && orgId) {
+        this.props.onChange(orgId)
+      }
+    }
+  }
+
   render() {
     return (
       <AccountProvider>
         {({ user }) => (
-          <div>
+          <Row>
+            <div style={{ width: '500px' }}>
+              <Select
+                value={{
+                  label: AccountStore.getOrganisation().name,
+                  value: AccountStore.getOrganisation().id,
+                }}
+                onChange={({ value }) => {
+                  API.setCookie('organisation', `${value}`)
+                  this.props.onChange && this.props.onChange(value)
+                }}
+                options={
+                  user &&
+                  user.organisations &&
+                  user.organisations.map((organisation) => {
+                    return { label: organisation.name, value: organisation.id }
+                  })
+                }
+                className='select-lg react-select'
+              />
+            </div>
             {user &&
               user.organisations &&
               user.organisations.map((organisation) => (
-                <div key={organisation.id}>
-                  <Row
-                    className={cx('popover-bt__list-item', {
-                      active:
-                        AccountStore.getOrganisation().id === organisation.id,
-                    })}
-                  >
-                    <a
-                      href='#'
-                      onClick={() => {
-                        API.setCookie('organisation', `${organisation.id}`)
-                        this.props.onChange && this.props.onChange(organisation)
-                      }}
-                    >
-                      {organisation.name}
-                    </a>
-                    {AccountStore.getOrganisationRole() === 'ADMIN' && (
-                      <NavLink
-                        id='organisation-settings-link'
-                        activeClassName='active'
-                        onClick={() => {
-                          this.props.onChange &&
-                            this.props.onChange(organisation)
-                        }}
-                        className='btn btn-link text-nowrap btn-sm edit'
-                        to='/organisation-settings'
-                      >
-                        <span
-                          style={{ fontSize: 16, marginRight: 4 }}
-                          className='icon--primary ion ion-md-settings'
-                        />
-                        {'Manage'}
-                      </NavLink>
-                    )}
-                  </Row>
-                </div>
+                <div key={organisation.id}></div>
               ))}
-          </div>
+          </Row>
         )}
       </AccountProvider>
     )
@@ -64,4 +56,4 @@ const OrganisationSelect = class extends Component {
 
 OrganisationSelect.propTypes = {}
 
-module.exports = OrganisationSelect
+export default OrganisationSelect

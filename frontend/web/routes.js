@@ -4,7 +4,6 @@ import { Route, Switch } from 'react-router-dom'
 import App from './components/App' // App Wrapper
 import HomePage from './components/pages/HomePage'
 import Maintenance from './components/Maintenance'
-import ProjectSelectPage from './components/pages/ProjectSelectPage'
 import CreateOrganisationPage from './components/pages/CreateOrganisationPage'
 import CreateEnvironmentPage from './components/pages/CreateEnvironmentPage'
 import UsersPage from './components/pages/UsersPage'
@@ -14,7 +13,6 @@ import IntegrationsPage from './components/pages/IntegrationsPage'
 import FlagsPage from './components/pages/FeaturesPage'
 import SegmentsPage from './components/pages/SegmentsPage'
 import OrganisationSettingsPage from './components/pages/OrganisationSettingsPage'
-import OrganisationGroupsPage from './components/pages/OrganisationGroupsPage'
 import AccountSettingsPage from './components/pages/AccountSettingsPage'
 import NotFoundErrorPage from './components/pages/NotFoundErrorPage'
 import ProjectSettingsPage from './components/pages/ProjectSettingsPage'
@@ -26,9 +24,13 @@ import ChangeRequestsPage from './components/pages/ChangeRequestsPage'
 import ChangeRequestPage from './components/pages/ChangeRequestPage'
 import ScheduledChangesPage from './components/pages/ScheduledChangesPage'
 import AuditLogPage from './components/pages/AuditLogPage'
-import CompareEnvironmentsPage from './components/pages/CompareEnvironmentsPage'
+import ComparePage from './components/pages/ComparePage'
 import WidgetPage from './components/pages/WidgetPage'
 import BrokenPage from './components/pages/BrokenPage'
+import GitHubSetupPage from './components/pages/GitHubSetupPage'
+import AuditLogItemPage from './components/pages/AuditLogItemPage'
+import FeatureHistoryPage from './components/pages/FeatureHistoryPage'
+import Utils from 'common/utils/utils'
 
 export default (
   <App>
@@ -37,9 +39,10 @@ export default (
       <Route path='/login' exact component={HomePage} />
       <Route path='/404' exact component={NotFoundErrorPage} />
       <Route path='/signup' exact component={HomePage} />
-      <Route path='/signup' exact component={HomePage} />
       <Route path='/home' exact component={HomePage} />
-      <Route path='/projects' exact component={ProjectSelectPage} />
+      {Utils.getFlagsmithHasFeature('github_integration') && (
+        <Route path='/github-setup' exact component={GitHubSetupPage} />
+      )}
       <Route path='/maintenance' exact component={Maintenance} />
       <Route
         path='/password-reset/confirm/:uid/:token/'
@@ -115,7 +118,12 @@ export default (
       <Route
         path='/project/:projectId/environment/:environmentId/compare'
         exact
-        component={CompareEnvironmentsPage}
+        component={ComparePage}
+      />
+      <Route
+        path='/project/:projectId/environment/:environmentId/history'
+        exact
+        component={FeatureHistoryPage}
       />
       <Route
         path='/project/:projectId/settings'
@@ -138,11 +146,6 @@ export default (
         component={OrganisationSettingsPage}
       />
       <Route
-        path='/organisation-groups'
-        exact
-        component={OrganisationGroupsPage}
-      />
-      <Route
         path='/project/:projectId/environment/:environmentId/account'
         exact
         component={AccountSettingsPage}
@@ -157,6 +160,11 @@ export default (
         path='/project/:projectId/audit-log'
         exact
         component={AuditLogPage}
+      />
+      <Route
+        path='/project/:projectId/environment/:environmentId/audit-log/:id'
+        exact
+        component={AuditLogItemPage}
       />
       <Route path='/create' exact component={CreateOrganisationPage} />
       <Route path='*' component={NotFoundPage} />

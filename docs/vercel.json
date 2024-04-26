@@ -53,6 +53,10 @@
             "destination": "/guides-and-examples/staged-feature-rollouts"
         },
         {
+            "source": "/guides-and-examples/okta-configuration",
+            "destination": "/system-administration/authentication/okta"
+        },
+        {
             "source": "/self-hosting/",
             "destination": "/basic-features/overview"
         },
@@ -229,6 +233,26 @@
             "destination": "/deployment/configuration/task-processor"
         },
         {
+            "source": "/deployment/configuration/authentication/ADFS",
+            "destination": "/system-administration/authentication/ADFS"
+        },
+        {
+            "source": "/deployment/configuration/authentication/LDAP",
+            "destination": "/system-administration/authentication/LDAP"
+        },
+        {
+            "source": "/deployment/configuration/authentication/OAuth",
+            "destination": "/system-administration/authentication/OAuth"
+        },
+        {
+            "source": "/deployment/configuration/authentication/Okta",
+            "destination": "/system-administration/authentication/SAML/Okta"
+        },
+        {
+            "source": "/deployment/configuration/authentication/SAML",
+            "destination": "/system-administration/authentication/SAML"
+        },
+        {
             "source": "/integrations/amplitude",
             "destination": "/integrations/analytics/amplitude"
         },
@@ -237,7 +261,7 @@
             "destination": "/integrations/analytics/heap"
         },
         {
-            "source": "/analytics/mixpanel",
+            "source": "/integrations/mixpanel",
             "destination": "/integrations/analytics/mixpanel"
         },
         {
@@ -263,6 +287,18 @@
         {
             "source": "/integrations/newrelic",
             "destination": "/integrations/apm/newrelic"
+        },
+        {
+            "source": "/system-administration/edge-proxy",
+            "destination": "/advanced-use/edge-proxy"
+        },
+        {
+            "source": "/integrations/slack",
+            "destination": "/integrations/project-management/slack"
+        },
+        {
+            "source": "/advanced-use/openfeature",
+            "destination": "/clients/openfeature"
         }
     ]
 }

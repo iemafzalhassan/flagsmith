@@ -1,7 +1,7 @@
 import amplitude from 'amplitude-js'
 import data from 'common/data/base/_data'
 const enableDynatrace = !!window.enableDynatrace && typeof dtrum !== 'undefined'
-
+import freeEmailDomains from 'free-email-domains'
 global.API = {
   ajaxHandler(store, res) {
     switch (res.status) {
@@ -40,7 +40,7 @@ global.API = {
       })
   },
   alias(id, user = {}) {
-    if (id === Project.excludeAnalytics) return
+    if (Project.excludeAnalytics?.includes(id)) return
     if (Project.mixpanel) {
       mixpanel.alias(id)
     }
@@ -82,8 +82,46 @@ global.API = {
       const identify = new amplitude.Identify().set('email', id)
       amplitude.getInstance().identify(identify)
     }
-    flagsmith.identify(id)
-    flagsmith.setTrait('email', id)
+    API.flagsmithIdentify()
+  },
+  flagsmithIdentify() {
+    const user = AccountStore.model
+    if (!user) {
+      return
+    }
+
+    flagsmith
+      .identify(user.email, {
+        email: user.email,
+        organisations: user.organisations
+          ? user.organisations.map((o) => `"${o.id}"`).join(',')
+          : '',
+      })
+      .then(() => {
+        return flagsmith.setTrait(
+          'logins',
+          (flagsmith.getTrait('logins') || 0) + 1,
+        )
+      })
+      .then(() => {
+        const organisation = AccountStore.getOrganisation()
+        const emailDomain = `${user?.email}`?.split('@')[1] || ''
+        const freeDomain = freeEmailDomains.includes(emailDomain)
+        if (
+          !freeDomain &&
+          typeof delighted !== 'undefined' &&
+          flagsmith.hasFeature('delighted')
+        ) {
+          delighted.survey({
+            createdAt: user.date_joined || new Date().toISOString(),
+            email: user.email,
+            name: `${user.first_name || ''} ${user.last_name || ''}`, // time subscribed (optional)
+            properties: {
+              company: organisation?.name,
+            },
+          })
+        }
+      })
   },
   getCookie(key) {
     const res = require('js-cookie').get(key)
@@ -114,7 +152,7 @@ global.API = {
     }
   },
   identify(id, user = {}) {
-    if (id === Project.excludeAnalytics) return
+    if (Project.excludeAnalytics?.includes(id)) return
     try {
       const orgs =
         (user &&
@@ -177,14 +215,7 @@ global.API = {
 
         amplitude.getInstance().identify(identify)
       }
-      flagsmith.identify(id)
-      flagsmith.setTrait(
-        'organisations',
-        user.organisations
-          ? user.organisations.map((o) => `"${o.id}"`).join(',')
-          : '',
-      )
-      flagsmith.setTrait('email', id)
+      API.flagsmithIdentify()
     } catch (e) {
       console.error('Error identifying', e)
     }
@@ -205,7 +236,7 @@ global.API = {
     })
   },
   register(email, firstName, lastName) {
-    if (email === Project.excludeAnalytics) return
+    if (Project.excludeAnalytics?.includes(email)) return
     if (Project.mixpanel) {
       mixpanel.register({
         'Email': email,
@@ -218,7 +249,7 @@ global.API = {
     if (Project.mixpanel) {
       mixpanel.reset()
     }
-    flagsmith.logout()
+    return flagsmith.logout()
   },
   setCookie(key, v) {
     try {
@@ -237,8 +268,8 @@ global.API = {
           require('js-cookie').set(key, v, {
             expires: 30,
             path: '/',
-            sameSite: 'none',
-            secure: true,
+            sameSite: Project.cookieSameSite || 'none',
+            secure: Project.useSecureCookies,
           })
         }
       }

@@ -3,6 +3,7 @@ from datetime import timedelta
 import pytest
 from django.contrib.sites.models import Site
 from django.utils import timezone
+from pytest_mock import MockerFixture
 
 from audit.constants import (
     CHANGE_REQUEST_APPROVED_MESSAGE,
@@ -12,9 +13,13 @@ from audit.constants import (
 )
 from audit.models import AuditLog
 from audit.related_object_type import RelatedObjectType
-from features.models import FeatureState
+from environments.models import Environment
+from features.models import Feature, FeatureState
+from features.versioning.models import EnvironmentFeatureVersion
+from features.versioning.versioning_service import get_environment_flags_list
 from features.workflows.core.exceptions import (
     CannotApproveOwnChangeRequest,
+    ChangeRequestDeletionError,
     ChangeRequestNotApprovedError,
 )
 from features.workflows.core.models import (
@@ -23,6 +28,8 @@ from features.workflows.core.models import (
     ChangeRequestGroupAssignment,
 )
 from users.models import FFAdminUser
+
+now = timezone.now()
 
 
 def test_change_request_approve_by_required_approver(
@@ -543,9 +550,7 @@ def test_committing_scheduled_change_requests_results_in_correct_versions(
 
     # Then
     # the feature state in the latest scheduled cr should be the one that is returned
-    feature_states = FeatureState.get_environment_flags_list(
-        environment_id=environment.id
-    )
+    feature_states = get_environment_flags_list(environment=environment)
     assert len(feature_states) == 1
     assert feature_states[0] == cr_2_fs
 
@@ -574,3 +579,127 @@ def test_change_request_group_assignment_sends_notification_emails_to_group_user
             "change_request_group_assignment_id": change_request_group_assignment.id
         }
     )
+
+
+@pytest.mark.freeze_time(now)
+def test_commit_change_request_publishes_environment_feature_versions(
+    environment: Environment,
+    feature: Feature,
+    admin_user: FFAdminUser,
+    mocker: MockerFixture,
+):
+    # Given
+    environment.use_v2_feature_versioning = True
+    environment.save()
+
+    feature_state = environment.feature_states.first()
+
+    change_request = ChangeRequest.objects.create(
+        title="Test CR", environment=environment, user=admin_user
+    )
+
+    environment_feature_version = EnvironmentFeatureVersion.objects.create(
+        environment=environment, feature=feature
+    )
+    environment_feature_version.feature_states.add(
+        feature_state.clone(env=environment, as_draft=True)
+    )
+
+    change_request.environment_feature_versions.add(environment_feature_version)
+
+    mock_rebuild_environment_document_task = mocker.patch(
+        "features.workflows.core.models.rebuild_environment_document"
+    )
+    mock_trigger_update_version_webhooks = mocker.patch(
+        "features.workflows.core.models.trigger_update_version_webhooks"
+    )
+
+    # When
+    change_request.commit(admin_user)
+
+    # Then
+    environment_feature_version.refresh_from_db()
+    assert environment_feature_version.published
+    assert environment_feature_version.published_by == admin_user
+    assert environment_feature_version.live_from == now
+
+    mock_rebuild_environment_document_task.delay.assert_called_once_with(
+        kwargs={"environment_id": environment.id},
+        delay_until=environment_feature_version.live_from,
+    )
+    mock_trigger_update_version_webhooks.delay.assert_called_once_with(
+        kwargs={
+            "environment_feature_version_uuid": str(environment_feature_version.uuid)
+        },
+        delay_until=environment_feature_version.live_from,
+    )
+
+
+def test_cannot_delete_committed_change_request(
+    change_request: ChangeRequest, admin_user: FFAdminUser
+) -> None:
+    # Given
+    change_request.commit(admin_user)
+    change_request.save()
+
+    # When
+    with pytest.raises(ChangeRequestDeletionError):
+        change_request.delete()
+
+    # Then
+    # exception raised
+
+
+def test_can_delete_committed_change_request_scheduled_for_the_future(
+    change_request: ChangeRequest,
+    admin_user: FFAdminUser,
+    feature: Feature,
+    environment: Environment,
+) -> None:
+    # Given
+    FeatureState.objects.create(
+        feature=feature,
+        environment=environment,
+        change_request=change_request,
+        live_from=timezone.now() + timedelta(days=1),
+        version=None,
+    )
+
+    change_request.commit(admin_user)
+    change_request.save()
+
+    # When
+    change_request.delete()
+
+    # Then
+    assert not ChangeRequest.objects.filter(id=change_request.id).exists()
+
+
+def test_can_delete_committed_change_request_scheduled_for_the_future_with_environment_feature_versions(
+    change_request: ChangeRequest,
+    admin_user: FFAdminUser,
+    feature: Feature,
+    environment: Environment,
+) -> None:
+    # Given
+    environment_feature_version = EnvironmentFeatureVersion.objects.create(
+        feature=feature,
+        environment=environment,
+        live_from=timezone.now() + timedelta(days=1),
+        change_request=change_request,
+    )
+    FeatureState.objects.create(
+        feature=feature,
+        environment=environment,
+        environment_feature_version=environment_feature_version,
+        version=None,
+    )
+
+    change_request.commit(admin_user)
+    change_request.save()
+
+    # When
+    change_request.delete()
+
+    # Then
+    assert not ChangeRequest.objects.filter(id=change_request.id).exists()

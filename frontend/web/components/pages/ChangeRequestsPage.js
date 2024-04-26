@@ -3,12 +3,16 @@ import ChangeRequestStore from 'common/stores/change-requests-store'
 import OrganisationStore from 'common/stores/organisation-store'
 import ProjectStore from 'common/stores/project-store'
 import ConfigProvider from 'common/providers/ConfigProvider'
-import PaymentModal from 'components/modals/Payment'
 import Tabs from 'components/base/forms/Tabs'
 import TabItem from 'components/base/forms/TabItem'
 import JSONReference from 'components/JSONReference'
 import InfoMessage from 'components/InfoMessage'
 import Icon from 'components/Icon'
+import { Link } from 'react-router-dom'
+import PageTitle from 'components/PageTitle'
+import { timeOutline } from 'ionicons/icons'
+import { IonIcon } from '@ionic/react'
+import Utils from 'common/utils/utils'
 
 const ChangeRequestsPage = class extends Component {
   static displayName = 'ChangeRequestsPage'
@@ -22,6 +26,7 @@ const ChangeRequestsPage = class extends Component {
     this.state = {
       live_after: new Date().toISOString(),
       showArchived: false,
+      tab: Utils.fromParam().tab === 'closed' ? 1 : 0,
       tags: [],
     }
     ES6Component(this)
@@ -70,27 +75,16 @@ const ChangeRequestsPage = class extends Component {
         id='change-requests-page'
         className='app-container container'
       >
+        <PageTitle title={'Change Requests'}>
+          View and manage proposed feature state changes.
+        </PageTitle>
         <Flex>
-          <h4>Change Requests</h4>
-          <p>View and manage proposed feature state changes.</p>
           {!has4EyesPermission ? (
             <div className='mt-2'>
               <InfoMessage>
                 View and manage your feature changes with a Change Request flow
-                with our{' '}
-                <Button
-                  theme='text'
-                  onClick={() => {
-                    openModal(
-                      'Payment plans',
-                      <PaymentModal viewOnly={false} />,
-                      'modal-lg',
-                    )
-                  }}
-                >
-                  Scale-up plan
-                </Button>
-                . Find out more{' '}
+                with our <Link to='/organisation-settings'>Scale-up plan</Link>.
+                Find out more{' '}
                 <Button
                   theme='text'
                   href='https://docs.flagsmith.com/advanced-use/change-requests'
@@ -119,13 +113,9 @@ const ChangeRequestsPage = class extends Component {
                   </InfoMessage>
                 ) : null}
               </p>
-              <Tabs
-                value={this.state.tab}
-                onChange={(tab) => {
-                  this.setState({ tab })
-                }}
-              >
+              <Tabs urlParam={'tab'}>
                 <TabItem
+                  tabLabelString='Open'
                   tabLabel={
                     <span className='flex-row justify-content-center'>
                       Open
@@ -179,6 +169,7 @@ const ChangeRequestsPage = class extends Component {
                     )}
                     renderRow={({
                       created_at,
+                      description,
                       id,
                       live_from,
                       title,
@@ -202,14 +193,17 @@ const ChangeRequestsPage = class extends Component {
                             <div className='font-weight-medium'>
                               {title}
                               {isScheduled && (
-                                <span className='ml-1 mr-4 ion ion-md-time' />
+                                <span className='ml-1 mr-4 ion'>
+                                  <IonIcon icon={timeOutline} />
+                                </span>
                               )}
                             </div>
-                            <div className='list-item-subtitle'>
-                              Created at{' '}
+                            <div className='list-item-subtitle mt-1'>
+                              Created{' '}
                               {moment(created_at).format('Do MMM YYYY HH:mma')}{' '}
-                              by {user && user.first_name}{' '}
-                              {user && user.last_name}
+                              by {(user && user.first_name) || 'Unknown'}{' '}
+                              {(user && user.last_name) || 'user'}
+                              {description ? ` - ${description}` : ''}
                             </div>
                           </Flex>
                           <div className='table-column'>
@@ -225,6 +219,7 @@ const ChangeRequestsPage = class extends Component {
                   />
                 </TabItem>
                 <TabItem
+                  tabLabelString='Closed'
                   tabLabel={
                     <span className='flex-row justify-content-center'>
                       Closed
@@ -284,11 +279,11 @@ const ChangeRequestsPage = class extends Component {
                         >
                           <Flex className='table-column px-3'>
                             <div className='font-weight-medium'>{title}</div>
-                            <div className='list-item-subtitle'>
+                            <div className='list-item-subtitle mt-1'>
                               Live from{' '}
                               {moment(created_at).format('Do MMM YYYY HH:mma')}{' '}
-                              by {user && user.first_name}{' '}
-                              {user && user.last_name}
+                              by {(user && user.first_name) || 'Unknown'}{' '}
+                              {(user && user.last_name) || 'user'}
                             </div>
                           </Flex>
                           <div className='table-column'>

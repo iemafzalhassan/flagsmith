@@ -8,7 +8,6 @@ import ConfirmRemoveWebhook from 'components/modals/ConfirmRemoveWebhook'
 import ConfirmToggleEnvFeature from 'components/modals/ConfirmToggleEnvFeature'
 import EditPermissions from 'components/EditPermissions'
 import ServerSideSDKKeys from 'components/ServerSideSDKKeys'
-import PaymentModal from 'components/modals/Payment'
 import Tabs from 'components/base/forms/Tabs'
 import TabItem from 'components/base/forms/TabItem'
 import JSONReference from 'components/JSONReference'
@@ -16,6 +15,14 @@ import ColourSelect from 'components/tags/ColourSelect'
 import Constants from 'common/constants'
 import Switch from 'components/Switch'
 import Icon from 'components/Icon'
+import PageTitle from 'components/PageTitle'
+import { getStore } from 'common/store'
+import { getRoles } from 'common/services/useRole'
+import { getRolesEnvironmentPermissions } from 'common/services/useRolePermission'
+import AccountStore from 'common/stores/account-store'
+import { Link } from 'react-router-dom'
+import { enableFeatureVersioning } from 'common/services/useEnableFeatureVersioning'
+import EnvironmentVersioningListener from 'components/EnvironmentVersioningListener'
 
 const showDisabledFlagOptions = [
   { label: 'Inherit from Project', value: null },
@@ -32,12 +39,39 @@ const EnvironmentSettingsPage = class extends Component {
 
   constructor(props, context) {
     super(props, context)
-    this.state = {}
+    this.state = { env: {}, roles: [] }
     AppActions.getProject(this.props.match.params.projectId)
   }
 
   componentDidMount = () => {
     API.trackPage(Constants.pages.ENVIRONMENT_SETTINGS)
+    if (Utils.getFlagsmithHasFeature('show_role_management')) {
+      const env = ProjectStore.getEnvs().find(
+        (v) => v.api_key === this.props.match.params.environmentId,
+      )
+      this.setState({ env })
+      getRoles(
+        getStore(),
+        { organisation_id: AccountStore.getOrganisation().id },
+        { forceRefetch: true },
+      ).then((roles) => {
+        getRolesEnvironmentPermissions(
+          getStore(),
+          {
+            env_id: env.id,
+            organisation_id: AccountStore.getOrganisation().id,
+            role_id: roles.data.results[0].id,
+          },
+          { forceRefetch: true },
+        ).then((res) => {
+          const matchingItems = roles.data.results.filter((item1) =>
+            res.data.results.some((item2) => item2.role === item1.id),
+          )
+          this.setState({ roles: matchingItems })
+        })
+      })
+    }
+
     this.props.getWebhooks()
   }
 
@@ -55,7 +89,7 @@ const EnvironmentSettingsPage = class extends Component {
 
   onRemove = () => {
     toast('Your project has been removed')
-    this.context.router.history.replace('/projects')
+    this.context.router.history.replace('/organisation-settings')
   }
 
   confirmRemove = (environment, cb) => {
@@ -82,15 +116,16 @@ const EnvironmentSettingsPage = class extends Component {
 
   saveEnv = (e) => {
     e && e.preventDefault()
+
+    const env = _.find(ProjectStore.getEnvs(), {
+      api_key: this.props.match.params.environmentId,
+    })
+
     const { description, name } = this.state
     if (ProjectStore.isSaving || !name) {
       return
     }
     const has4EyesPermission = Utils.getPlansPermission('4_EYES')
-
-    const env = _.find(ProjectStore.getEnvs(), {
-      api_key: this.props.match.params.environmentId,
-    })
     AppActions.editEnv(
       Object.assign({}, env, {
         allow_client_traits: !!this.state.allow_client_traits,
@@ -105,6 +140,7 @@ const EnvironmentSettingsPage = class extends Component {
         name: name || env.name,
         use_identity_composite_key_for_hashing:
           !!this.state.use_identity_composite_key_for_hashing,
+        use_mv_v2_evaluation: !!this.state.use_mv_v2_evaluation,
       }),
     )
   }
@@ -160,18 +196,19 @@ const EnvironmentSettingsPage = class extends Component {
     )
   }
 
-  confirmToggle = (description, feature, featureValue) => {
+  confirmToggle = (title, description, feature) => {
     openModal(
-      'Enable "Hide Sensitive Data"',
+      title,
       <ConfirmToggleEnvFeature
-        description={description}
+        description={`${description} Are you sure that you want to change this value?`}
         feature={feature}
-        featureValue={featureValue}
+        featureValue={this.state[feature]}
         onToggleChange={(value) => {
-          this.setState({ hide_sensitive_data: value }, this.saveEnv)
+          this.setState({ [feature]: value }, this.saveEnv)
           closeModal()
         }}
       />,
+      'p-0 modal-sm',
     )
   }
 
@@ -183,12 +220,13 @@ const EnvironmentSettingsPage = class extends Component {
         hide_sensitive_data,
         name,
         use_identity_composite_key_for_hashing,
+        use_v2_feature_versioning,
       },
     } = this
     const has4EyesPermission = Utils.getPlansPermission('4_EYES')
 
     return (
-      <div className='app-container'>
+      <div className='app-container container'>
         <ProjectProvider
           onRemoveEnvironment={this.onRemoveEnvironment}
           id={this.props.match.params.projectId}
@@ -218,99 +256,101 @@ const EnvironmentSettingsPage = class extends Component {
                   name: env.name,
                   use_identity_composite_key_for_hashing:
                     !!env.use_identity_composite_key_for_hashing,
+                  use_v2_feature_versioning: !!env.use_v2_feature_versioning,
                 })
               }, 10)
             }
+            const onEnableVersioning = () => {
+              openConfirm({
+                body: 'This will allow you to attach versions to updating feature values and segment overrides. Note: this may take several minutes to process',
+                onYes: () => {
+                  enableFeatureVersioning(getStore(), {
+                    environmentId: env.api_key,
+                  }).then((res) => {
+                    toast(
+                      'Feature Versioning Enabled, this may take several minutes to process.',
+                    )
+                    this.setState({
+                      enabledFeatureVersioning: true,
+                    })
+                  })
+                },
+                title: 'Enable "Feature Versioning"',
+              })
+            }
             return (
-              <div className='container'>
+              <>
+                <PageTitle title='Settings' />
                 {isLoading && (
                   <div className='centered-container'>
                     <Loader />
                   </div>
                 )}
                 {!isLoading && (
-                  <Tabs uncontrolled>
+                  <Tabs urlParam='tab' className='mt-0' uncontrolled>
                     <TabItem tabLabel='General'>
                       <div className='mt-4'>
+                        <h5 className='mb-5'>General Settings</h5>
                         <JSONReference title={'Environment'} json={env} />
-                        <div>
+                        <div className='col-md-6'>
                           <form onSubmit={this.saveEnv}>
-                            <div className='row'>
-                              <div className='col-md-6'>
-                                <InputGroup
-                                  ref={(e) => (this.input = e)}
-                                  value={
-                                    typeof this.state.name === 'string'
-                                      ? this.state.name
-                                      : env.name
-                                  }
-                                  inputProps={{
-                                    className: 'full-width',
-                                    name: 'env-name',
-                                  }}
-                                  className='full-width'
-                                  onChange={(e) =>
-                                    this.setState({
-                                      name: Utils.safeParseEventValue(e),
-                                    })
-                                  }
-                                  isValid={name && name.length}
-                                  type='text'
-                                  title='Environment Name'
-                                  placeholder='Environment Name'
-                                />
-                              </div>
-                            </div>
-                            <div className='row'>
-                              <div className='col-md-6'>
-                                <InputGroup
-                                  textarea
-                                  ref={(e) => (this.input = e)}
-                                  value={
-                                    typeof this.state.description === 'string'
-                                      ? this.state.description
-                                      : env.description
-                                  }
-                                  inputProps={{
-                                    className: 'input--wide textarea-lg',
-                                  }}
-                                  onChange={(e) =>
-                                    this.setState({
-                                      description: Utils.safeParseEventValue(e),
-                                    })
-                                  }
-                                  isValid={name && name.length}
-                                  type='text'
-                                  title='Environment Description'
-                                  placeholder='Environment Description'
-                                />
-                              </div>
-                            </div>
-                            <div className='row'>
-                              <div className='col-md-6 text-right'>
-                                <Button
-                                  id='save-env-btn'
-                                  className='float-right mb-4'
-                                  type='submit'
-                                  disabled={this.saveDisabled()}
-                                >
-                                  {isSaving ? 'Updating' : 'Update'}
-                                </Button>
-                              </div>
+                            <InputGroup
+                              ref={(e) => (this.input = e)}
+                              value={
+                                typeof this.state.name === 'string'
+                                  ? this.state.name
+                                  : env.name
+                              }
+                              inputProps={{
+                                className: 'full-width',
+                                name: 'env-name',
+                              }}
+                              className='full-width'
+                              onChange={(e) =>
+                                this.setState({
+                                  name: Utils.safeParseEventValue(e),
+                                })
+                              }
+                              isValid={name && name.length}
+                              type='text'
+                              title='Environment Name'
+                              placeholder='Environment Name'
+                            />
+                            <InputGroup
+                              textarea
+                              ref={(e) => (this.input = e)}
+                              value={
+                                typeof this.state.description === 'string'
+                                  ? this.state.description
+                                  : env.description
+                              }
+                              inputProps={{
+                                className: 'input--wide textarea-lg',
+                              }}
+                              onChange={(e) =>
+                                this.setState({
+                                  description: Utils.safeParseEventValue(e),
+                                })
+                              }
+                              isValid={name && name.length}
+                              type='text'
+                              title='Environment Description'
+                              placeholder='Environment Description'
+                            />
+                            <div className='text-right mt-5'>
+                              <Button
+                                id='save-env-btn'
+                                type='submit'
+                                disabled={this.saveDisabled()}
+                              >
+                                {isSaving ? 'Updating' : 'Update'}
+                              </Button>
                             </div>
                           </form>
                         </div>
-                        <div>
-                          <Row space>
-                            <div className='col-md-8 pl-0'>
-                              <h5 className='m-b-0'>Environment Banner</h5>
-                              <p className='fs-small lh-sm mb-0'>
-                                This will show a banner whenever you view its
-                                pages, this is generally used to warn people
-                                that they are viewing and editing a sensitive
-                                environment.
-                              </p>
-                            </div>
+                        <hr className='py-0 my-4' />
+                        <div className='col-md-6 mt-4'>
+                          <Row className='mb-2'>
                             <Switch
                               onChange={(value) =>
                                 this.setState(
@@ -326,11 +366,16 @@ const EnvironmentSettingsPage = class extends Component {
                                 typeof this.state.banner_text === 'string'
                               }
                             />
+                            <h5 className='mb-0 ml-3'>Environment Banner</h5>
                           </Row>
+                          <p className='fs-small lh-sm mb-0'>
+                            This will show a banner whenever you view its pages,
+                            this is generally used to warn people that they are
+                            viewing and editing a sensitive environment.
+                          </p>
                           {typeof this.state.banner_text === 'string' && (
-                            <Row className='mt-2'>
+                            <Row className='mt-4 flex-nowrap'>
                               <Input
-                                style={{ width: 400 }}
                                 placeholder='Banner text'
                                 value={this.state.banner_text}
                                 onChange={(e) =>
@@ -338,6 +383,7 @@ const EnvironmentSettingsPage = class extends Component {
                                     banner_text: Utils.safeParseEventValue(e),
                                   })
                                 }
+                                className='full-width'
                               />
                               <div className='ml-2'>
                                 <ColourSelect
@@ -347,143 +393,159 @@ const EnvironmentSettingsPage = class extends Component {
                                   }
                                 />
                               </div>
-                              <Button
-                                onClick={this.saveEnv}
-                                className='ml-2'
-                                size='small'
-                              >
+                              <Button onClick={this.saveEnv} size='small'>
                                 Save
                               </Button>
                             </Row>
                           )}
                         </div>
-                        {Utils.getFlagsmithHasFeature(
-                          'configure_hide_sensitive_data',
-                        ) && (
+                        {Utils.getFlagsmithHasFeature('feature_versioning') && (
                           <div>
-                            <Row space style={{ marginTop: '1.5rem' }}>
-                              <div className='col-md-8 pl-0'>
-                                <h5 className='m-b-0'>Hide sensitive data</h5>
-                                <p className='fs-small lh-sm'>
-                                  Exclude sensitive data from endpoints
-                                  returning flags and identity information to
-                                  the SDKs or via our REST API. For full
-                                  information on the excluded fields see
-                                  documentation{' '}
-                                  <Button
-                                    theme='text'
-                                    href='https://docs.flagsmith.com/system-administration/security#hide-sensitive-data'
-                                    target='_blank'
-                                  >
-                                    here.
-                                  </Button>
-                                  <br />
-                                  <strong>
-                                    Warning! Enabling this feature will change
-                                    the response from the API and could break
-                                    your existing code.
-                                  </strong>
-                                </p>
-                              </div>
-                              <div className='col-md-4 pr-0 text-right'>
-                                <div>
-                                  <Switch
-                                    className='float-right'
-                                    checked={hide_sensitive_data}
-                                    onChange={(v) => {
-                                      this.confirmToggle(
-                                        'The data returned from the API will change and could break your existing code. Are you sure that you want to change this value?',
-                                        'hide_sensitive_data',
-                                        hide_sensitive_data,
-                                      )
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            </Row>
+                            <div className='col-md-6 mt-4'>
+                              <EnvironmentVersioningListener
+                                id={env.api_key}
+                                versioningEnabled={use_v2_feature_versioning}
+                                onChange={() => {
+                                  this.setState({
+                                    use_v2_feature_versioning: true,
+                                  })
+                                }}
+                              />
+                              <Row>
+                                <Switch
+                                  data-test={
+                                    use_v2_feature_versioning
+                                      ? 'feature-versioning-enabled'
+                                      : 'enable-versioning'
+                                  }
+                                  disabled={
+                                    use_v2_feature_versioning ||
+                                    this.state.enabledFeatureVersioning
+                                  }
+                                  className='float-right'
+                                  checked={use_v2_feature_versioning}
+                                  onChange={onEnableVersioning}
+                                />
+                                <h5 className='mb-0 ml-3'>
+                                  Feature versioning
+                                </h5>
+                              </Row>
+
+                              <p className='fs-small lh-sm'>
+                                Allows you to attach versions to updating
+                                feature values and segment overrides. This
+                                setting may take up to a minute to take affect.
+                                <br />
+                                <strong>
+                                  Warning! Enabling this is irreversable
+                                </strong>
+                              </p>
+                            </div>
                           </div>
                         )}
-                        <FormGroup className='mt-4'>
-                          <Row space>
-                            <div className='col-md-8 pl-0'>
-                              <h5 className='m-b-0'>Change Requests</h5>
-                              {!has4EyesPermission ? (
-                                <p className='fs-small lh-sm'>
-                                  View and manage your feature changes with a
-                                  Change Request flow with our{' '}
-                                  <Button
-                                    theme='text'
-                                    onClick={() => {
-                                      openModal(
-                                        'Payment plans',
-                                        <PaymentModal viewOnly={false} />,
-                                        'modal-lg',
-                                      )
-                                    }}
-                                  >
-                                    Scale-up plan
-                                  </Button>
-                                  . Find out more{' '}
-                                  <Button
-                                    theme='text'
-                                    href='https://docs.flagsmith.com/advanced-use/change-requests'
-                                    target='_blank'
-                                  >
-                                    here
-                                  </Button>
-                                  .
-                                </p>
-                              ) : (
-                                <p className='fs-small lh-sm'>
-                                  Require a minimum number of people to approve
-                                  changes to features.{' '}
-                                  <Button
-                                    theme='text'
-                                    href='https://docs.flagsmith.com/advanced-use/change-requests'
-                                    target='_blank'
-                                  >
-                                    Learn about Change Requests.
-                                  </Button>
-                                </p>
-                              )}
-                            </div>
-                            <div className='col-md-4 pr-0 text-right'>
-                              <div>
-                                <Switch
-                                  disabled={!has4EyesPermission}
-                                  className='float-right'
-                                  checked={
-                                    has4EyesPermission &&
-                                    Utils.changeRequestsEnabled(
-                                      this.state
-                                        .minimum_change_request_approvals,
-                                    )
-                                  }
-                                  onChange={(v) =>
-                                    this.setState(
-                                      {
-                                        minimum_change_request_approvals: v
-                                          ? 0
-                                          : null,
-                                      },
-                                      this.saveEnv,
-                                    )
-                                  }
-                                />
-                              </div>
-                            </div>
+                        <div className='col-md-6 mt-4'>
+                          <Row className='mb-2'>
+                            <Switch
+                              checked={hide_sensitive_data}
+                              onChange={(v) => {
+                                this.confirmToggle(
+                                  'The data returned from the API will change and could break your existing code. Are you sure that you want to change this value?',
+                                  'hide_sensitive_data',
+                                  hide_sensitive_data,
+                                )
+                              }}
+                            />
+                            <h5 className='mb-0 ml-3'>Hide sensitive data</h5>
                           </Row>
+                          <p className='fs-small lh-sm'>
+                            Exclude sensitive data from endpoints returning
+                            flags and identity information to the SDKs or via
+                            our REST API. For full information on the excluded
+                            fields see documentation{' '}
+                            <Button
+                              theme='text'
+                              href='https://docs.flagsmith.com/system-administration/security#hide-sensitive-data'
+                              target='_blank'
+                              className='fw-normal'
+                            >
+                              here.
+                            </Button>
+                            <div className='text-danger'>
+                              Warning! Enabling this feature will change the
+                              response from the API and could break your
+                              existing code.
+                            </div>
+                          </p>
+                        </div>
+                        <FormGroup className='mt-4 col-md-6'>
+                          <Row className='mb-2'>
+                            <Switch
+                              className='float-right'
+                              disabled={!has4EyesPermission}
+                              checked={
+                                has4EyesPermission &&
+                                Utils.changeRequestsEnabled(
+                                  this.state.minimum_change_request_approvals,
+                                )
+                              }
+                              onChange={(v) =>
+                                this.setState(
+                                  {
+                                    minimum_change_request_approvals: v
+                                      ? 0
+                                      : null,
+                                  },
+                                  this.saveEnv,
+                                )
+                              }
+                            />
+                            <h5 className='mb-0 ml-3'>Change Requests</h5>
+                          </Row>
+                          {!has4EyesPermission ? (
+                            <p className='fs-small lh-sm'>
+                              View and manage your feature changes with a Change
+                              Request flow with our{' '}
+                              <Link
+                                to='/organisation-settings'
+                                className='btn-link'
+                              >
+                                Scale-up plan
+                              </Link>
+                              . Find out more{' '}
+                              <Button
+                                theme='text'
+                                href='https://docs.flagsmith.com/advanced-use/change-requests'
+                                target='_blank'
+                              >
+                                here
+                              </Button>
+                              .
+                            </p>
+                          ) : (
+                            <p className='fs-small lh-sm mb-0'>
+                              Require a minimum number of people to approve
+                              changes to features.{' '}
+                              <Button
+                                theme='text'
+                                href='https://docs.flagsmith.com/advanced-use/change-requests'
+                                target='_blank'
+                                className='fw-normal'
+                              >
+                                Learn about Change Requests.
+                              </Button>
+                            </p>
+                          )}
 
                           {Utils.changeRequestsEnabled(
                             this.state.minimum_change_request_approvals,
                           ) &&
                             has4EyesPermission && (
-                              <div>
+                              <div className='mt-4'>
                                 <div className='mb-2'>
                                   <strong>Minimum number of approvals</strong>
                                 </div>
                                 <Row>
-                                  <Column className='m-l-0'>
+                                  <Flex>
                                     <Input
                                       ref={(e) => (this.input = e)}
                                       value={`${this.state.minimum_change_request_approvals}`}
@@ -505,12 +567,12 @@ const EnvironmentSettingsPage = class extends Component {
                                       type='number'
                                       placeholder='Minimum number of approvals'
                                     />
-                                  </Column>
+                                  </Flex>
                                   <Button
                                     type='button'
                                     onClick={this.saveEnv}
                                     id='save-env-btn'
-                                    className='float-right'
+                                    className='ml-3'
                                     disabled={
                                       this.saveDisabled() ||
                                       isSaving ||
@@ -523,11 +585,12 @@ const EnvironmentSettingsPage = class extends Component {
                               </div>
                             )}
                         </FormGroup>
-                        <FormGroup className='mt-4'>
-                          <Row className='mt-4' space>
-                            <div className='col-md-8 pl-0'>
+                        <hr className='py-0 my-4' />
+                        <FormGroup className='mt-4 col-md-6'>
+                          <Row space>
+                            <div className='col-md-7'>
                               <h5>Delete Environment</h5>
-                              <p className='fs-small lh-sm'>
+                              <p className='fs-small lh-sm mb-0'>
                                 This environment will be permanently deleted.
                               </p>
                             </div>
@@ -549,9 +612,9 @@ const EnvironmentSettingsPage = class extends Component {
                                   },
                                 )
                               }
-                              className='btn btn--with-icon ml-auto btn--remove'
+                              className='btn btn-with-icon btn-remove'
                             >
-                              <RemoveIcon />
+                              <Icon name='trash-2' width={20} fill='#EF4D56' />
                             </Button>
                           </Row>
                         </FormGroup>
@@ -562,165 +625,155 @@ const EnvironmentSettingsPage = class extends Component {
                       tabLabel='SDK Settings'
                     >
                       <div className='mt-4'>
-                        <JSONReference title={'Environment'} json={env} />
-                        <div>
+                        <JSONReference
+                          title={'Environment'}
+                          json={env}
+                          className='mb-4'
+                        />
+                        <div className='col-md-6'>
                           <form onSubmit={this.saveEnv}>
-                            {Utils.getFlagsmithHasFeature(
-                              'hide_disabled_flags_environment',
-                            ) && (
-                              <Row className='mb-4' space>
-                                <div className='col-md-8 pl-0'>
-                                  <h5 className='m-b-0'>
-                                    Hide disabled flags from SDKs
-                                  </h5>
-                                  <p className='mb-0  fs-small lh-sm'>
-                                    To prevent letting your users know about
-                                    your upcoming features and to cut down on
-                                    payload, enabling this will prevent the API
-                                    from returning features that are disabled.
-                                    You can also manage this in{' '}
-                                    <Link
-                                      to={`/project/${this.props.match.params.projectId}/settings`}
-                                    >
-                                      Project settings
-                                    </Link>
-                                    .
-                                  </p>
-                                </div>
-                                <div className='col-md-3'>
-                                  <Select
-                                    value={
-                                      showDisabledFlagOptions.find(
-                                        (v) =>
-                                          v.value ===
-                                          this.state.hide_disabled_flags,
-                                      ) || showDisabledFlagOptions[0]
-                                    }
-                                    onChange={(v) => {
-                                      this.setState(
-                                        { hide_disabled_flags: v.value },
-                                        this.saveEnv,
-                                      )
-                                    }}
-                                    options={showDisabledFlagOptions}
-                                    data-test='js-hide-disabled-flags'
-                                    disabled={isSaving}
-                                  />
-                                </div>
-                              </Row>
-                            )}
-                            <Row className='mt-4' space>
-                              <div className='col-md-8 pl-0'>
-                                <h5 className='m-b-0'>
+                            <div>
+                              <h5 className='mb-2'>
+                                Hide disabled flags from SDKs
+                              </h5>
+                              <Select
+                                value={
+                                  showDisabledFlagOptions.find(
+                                    (v) =>
+                                      v.value ===
+                                      this.state.hide_disabled_flags,
+                                  ) || showDisabledFlagOptions[0]
+                                }
+                                onChange={(v) => {
+                                  this.setState(
+                                    { hide_disabled_flags: v.value },
+                                    this.saveEnv,
+                                  )
+                                }}
+                                options={showDisabledFlagOptions}
+                                data-test='js-hide-disabled-flags'
+                                disabled={isSaving}
+                                className='full-width react-select mb-2'
+                              />
+                              <p className='mb-0 fs-small lh-sm'>
+                                To prevent letting your users know about your
+                                upcoming features and to cut down on payload,
+                                enabling this will prevent the API from
+                                returning features that are disabled. You can
+                                also manage this in{' '}
+                                <Link
+                                  to={`/project/${this.props.match.params.projectId}/settings`}
+                                >
+                                  Project settings
+                                </Link>
+                                .
+                              </p>
+                            </div>
+                            <div className='mt-4'>
+                              <Row className='mb-2'>
+                                <Switch
+                                  checked={allow_client_traits}
+                                  onChange={(v) => {
+                                    this.setState(
+                                      { allow_client_traits: v },
+                                      this.saveEnv,
+                                    )
+                                  }}
+                                />
+                                <h5 className='mb-0 ml-3'>
                                   Allow client SDKs to set user traits
                                 </h5>
-                                <p className='fs-small lh-sm'>
-                                  Disabling this option will prevent client SDKs
-                                  from using the client key from setting traits.
-                                </p>
-                              </div>
-                              <div className='col-md-4 pr-0 text-right'>
-                                <div>
-                                  <Switch
-                                    className='float-right'
-                                    checked={allow_client_traits}
-                                    onChange={(v) => {
-                                      this.setState(
-                                        { allow_client_traits: v },
-                                        this.saveEnv,
-                                      )
-                                    }}
-                                  />
+                              </Row>
+                              <p className='fs-small lh-sm mb-0'>
+                                Disabling this option will prevent client SDKs
+                                from using the client key from setting traits.
+                              </p>
+                            </div>
+                            <div className='mt-4'>
+                              <Row className='mb-2'>
+                                <Switch
+                                  checked={
+                                    use_identity_composite_key_for_hashing
+                                  }
+                                  onChange={(v) => {
+                                    this.setState(
+                                      {
+                                        use_identity_composite_key_for_hashing:
+                                          v,
+                                      },
+                                      this.saveEnv,
+                                    )
+                                  }}
+                                />
+                                <h5 className='mb-0 ml-3'>
+                                  Use Consistent Hashing
+                                </h5>
+                              </Row>
+                              <p className='fs-small lh-sm'>
+                                Enabling this setting will ensure that
+                                multivariate and percentage split evaluations
+                                made by the API are consistent with those made
+                                by local evaluation mode in our server side
+                                SDKs.
+                                <div className='text-danger'>
+                                  Warning: Toggling this setting will mean that
+                                  some users will start receiving different
+                                  values for multivariate flags and flags with a
+                                  percentage split segment override via the API
+                                  / remote evaluation. Values received in local
+                                  evaluation mode will not change.
                                 </div>
-                              </div>
-                              {Utils.getFlagsmithHasFeature(
-                                'consistent_hashing_setting',
-                              ) && (
-                                <>
-                                  <Row className='mt-4' space>
-                                    <div className='col-md-8 pl-0'>
-                                      <h5 className='m-b-0'>
-                                        Use Consistent Hashing
-                                      </h5>
-                                      <p className='fs-small lh-sm'>
-                                        Enabling this setting will ensure that
-                                        multivariate and percentage split
-                                        evaluations made by the API are
-                                        consistent with those made by local
-                                        evaluation mode in our server side SDKs.
-                                      </p>
-                                    </div>
-                                    <div className='col-md-4 pr-0 text-right'>
-                                      <div>
-                                        <Switch
-                                          className='float-right'
-                                          checked={
-                                            use_identity_composite_key_for_hashing
-                                          }
-                                          onChange={(v) => {
-                                            this.setState(
-                                              {
-                                                use_identity_composite_key_for_hashing:
-                                                  v,
-                                              },
-                                              this.saveEnv,
-                                            )
-                                          }}
-                                        />
-                                      </div>
-                                    </div>
-                                  </Row>
-                                  <p className='text-danger  fs-small lh-sm'>
-                                    Warning: Toggling this setting will mean
-                                    that some users will start receiving
-                                    different values for multivariate flags and
-                                    flags with a percentage split segment
-                                    override via the API / remote evaluation.
-                                    Values received in local evaluation mode
-                                    will not change.
-                                  </p>
-                                </>
-                              )}
-                            </Row>
+                              </p>
+                            </div>
                           </form>
                         </div>
                       </div>
                     </TabItem>
-                    <TabItem tabLabel='Keys'>
+                    <TabItem tabLabel='SDK Keys'>
                       <FormGroup className='mt-4'>
-                        <h5>Client-side Environment Key</h5>
-                        <div className='row'>
-                          <div className='col-md-6'>
-                            <Row>
-                              <Flex>
-                                <Input
-                                  value={this.props.match.params.environmentId}
-                                  inputClassName='input input--wide'
-                                  type='text'
-                                  title={<h3>Client-side Environment Key</h3>}
-                                  placeholder='Client-side Environment Key'
-                                />
-                              </Flex>
-                              <Button
-                                onClick={() => {
-                                  navigator.clipboard.writeText(
-                                    this.props.match.params.environmentId,
-                                  )
-                                  toast('Copied')
-                                }}
-                                className='ml-2'
-                              >
-                                Copy
-                              </Button>
-                            </Row>
-                          </div>
+                        <h5 className='mb-5'>Client-side Environment Key</h5>
+                        <div className='col-md-6'>
+                          <p className='fs-small lh-sm mb-0'>
+                            Use this key to initialise{' '}
+                            <Button
+                              theme='text'
+                              href='https://docs.flagsmith.com/clients/overview#client-side-sdks'
+                              target='__blank'
+                            >
+                              Client-side
+                            </Button>{' '}
+                            SDKs.
+                          </p>
+                          <Row>
+                            <Flex>
+                              <Input
+                                value={this.props.match.params.environmentId}
+                                inputClassName='input input--wide'
+                                type='text'
+                                title={<h3>Client-side Environment Key</h3>}
+                                placeholder='Client-side Environment Key'
+                              />
+                            </Flex>
+                            <Button
+                              onClick={() => {
+                                navigator.clipboard.writeText(
+                                  this.props.match.params.environmentId,
+                                )
+                                toast('Copied')
+                              }}
+                              className='ml-2 btn-with-icon'
+                            >
+                              <Icon name='copy' width={20} fill='#656D7B' />
+                            </Button>
+                          </Row>
                         </div>
                       </FormGroup>
+                      <hr className='py-0 my-4' />
                       <ServerSideSDKKeys
                         environmentId={this.props.match.params.environmentId}
                       />
                     </TabItem>
-                    <TabItem tabLabel='Members'>
+                    <TabItem tabLabel='Permissions'>
                       <FormGroup>
                         <EditPermissions
                           tabClassName='flat-panel'
@@ -728,38 +781,37 @@ const EnvironmentSettingsPage = class extends Component {
                           parentLevel='project'
                           parentSettingsLink={`/project/${this.props.match.params.projectId}/settings`}
                           id={this.props.match.params.environmentId}
+                          envId={env.id}
                           router={this.context.router}
                           level='environment'
+                          roleTabTitle='Environment Permissions'
+                          roles={this.state.roles}
                         />
                       </FormGroup>
                     </TabItem>
                     <TabItem tabLabel='Webhooks'>
+                      <hr className='py-0 my-4' />
                       <FormGroup className='mt-4'>
-                        <Row className='mb-3' space>
-                          <div className='col-md-8 pl-0'>
-                            <h5 className='m-b-0'>Feature Webhooks</h5>
-                            <p className='fs-small lh-sm'>
-                              Feature webhooks let you know when features have
-                              changed. You can configure 1 or more Feature
-                              Webhooks per Environment.{' '}
-                              <Button
-                                theme='text'
-                                href='https://docs.flagsmith.com/system-administration/webhooks#environment-web-hooks'
-                                target='_blank'
-                              >
-                                Learn about Feature Webhooks.
-                              </Button>
-                            </p>
-                          </div>
-                          <div className='col-md-4 pr-0'>
+                        <div className='col-md-8'>
+                          <h5 className='mb-2'>Feature Webhooks</h5>
+                          <p className='fs-small lh-sm mb-4'>
+                            Feature webhooks let you know when features have
+                            changed. You can configure 1 or more Feature
+                            Webhooks per Environment.{' '}
                             <Button
-                              className='float-right'
-                              onClick={this.createWebhook}
+                              theme='text'
+                              href='https://docs.flagsmith.com/system-administration/webhooks#environment-web-hooks'
+                              target='_blank'
+                              className='fw-normal'
                             >
-                              Create feature webhook
+                              Learn about Feature Webhooks.
                             </Button>
-                          </div>
-                        </Row>
+                          </p>
+                        </div>
+                        <Button onClick={this.createWebhook}>
+                          Create feature webhook
+                        </Button>
+                        <hr className='py-0 my-4' />
                         {webhooksLoading && !webhooks ? (
                           <Loader />
                         ) : (
@@ -854,7 +906,7 @@ const EnvironmentSettingsPage = class extends Component {
                     </TabItem>
                   </Tabs>
                 )}
-              </div>
+              </>
             )
           }}
         </ProjectProvider>

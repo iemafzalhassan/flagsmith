@@ -13,6 +13,10 @@ import FeatureValue from './FeatureValue'
 import { sortBy } from 'lodash'
 import { useHasPermission } from 'common/providers/Permission'
 import Constants from 'common/constants'
+import Button from './base/forms/Button'
+import ProjectStore from 'common/stores/project-store'
+import SegmentOverridesIcon from './SegmentOverridesIcon'
+import IdentityOverridesIcon from './IdentityOverridesIcon'
 
 type CompareIdentitiesType = {
   projectId: string
@@ -49,7 +53,10 @@ const CompareIdentities: FC<CompareIdentitiesType> = ({
 }) => {
   const [leftId, setLeftId] = useState<IdentitySelectType['value']>()
   const [rightId, setRightId] = useState<IdentitySelectType['value']>()
-  const { data: projectFlags } = useGetProjectFlagsQuery({ project: projectId })
+  const { data: projectFlags } = useGetProjectFlagsQuery({
+    environment: ProjectStore.getEnvironmentIdFromKey(_environmentId),
+    project: projectId,
+  })
   const [environmentId, setEnvironmentId] = useState(_environmentId)
   const [showArchived, setShowArchived] = useState(false)
 
@@ -115,8 +122,12 @@ const CompareIdentities: FC<CompareIdentitiesType> = ({
 
   return (
     <div>
-      <h3>Compare Identities</h3>
-      <p>Compare feature states between 2 identities</p>
+      <div className='col-md-8'>
+        <h5 className='mb-1'>Compare Identities</h5>
+        <p className='fs-small mb-4 lh-sm'>
+          Compare feature states between 2 identities.
+        </p>
+      </div>
       <div className='mb-2' style={{ width: selectWidth }}>
         <EnvironmentSelect
           value={environmentId}
@@ -136,7 +147,7 @@ const CompareIdentities: FC<CompareIdentitiesType> = ({
         />
       ) : (
         <Row>
-          <div className='mr-2' style={{ width: selectWidth }}>
+          <div style={{ width: selectWidth }}>
             <IdentitySelect
               value={leftId}
               isEdge={isEdge}
@@ -145,10 +156,16 @@ const CompareIdentities: FC<CompareIdentitiesType> = ({
               environmentId={environmentId}
             />
           </div>
-          <div>
-            <span className='icon ios ion-md-arrow-back mx-2' />
+          <div className='mx-3'>
+            <Icon
+              name='arrow-left'
+              width={20}
+              fill={
+                Utils.getFlagsmithHasFeature('dark_mode') ? '#fff' : '#1A2634'
+              }
+            />
           </div>
-          <div className='mr-2' style={{ width: selectWidth }}>
+          <div style={{ width: selectWidth }}>
             <IdentitySelect
               value={rightId}
               ignoreIds={[`${leftId?.value}`]}
@@ -163,6 +180,7 @@ const CompareIdentities: FC<CompareIdentitiesType> = ({
       {isReady && (
         <>
           <PanelSearch
+            className='no-pad mt-4'
             title={'Changed Flags'}
             searchPanel={
               <Row className='mb-2'>
@@ -172,7 +190,7 @@ const CompareIdentities: FC<CompareIdentitiesType> = ({
                     setShowArchived(!showArchived)
                   }}
                   className='px-2 py-2 ml-2 mr-2'
-                  tag={{ color: '#0AADDF', label: 'Archived' }}
+                  tag={Constants.archivedTag}
                 />
               </Row>
             }
@@ -200,23 +218,26 @@ const CompareIdentities: FC<CompareIdentitiesType> = ({
                       !enabledDifferent && !valueDifferent && 'faded'
                     }`}
                   >
-                    <span className='font-weight-medium'>
-                      {description ? (
-                        <Tooltip
-                          title={
-                            <span>
-                              {name}
-                              <span className={'ms-1'}></span>
-                              <Icon name='info-outlined' />
-                            </span>
-                          }
-                        >
+                    <Row>
+                      <span className='font-weight-medium'>
+                        <Tooltip title={<span>{name}</span>}>
                           {description}
                         </Tooltip>
-                      ) : (
-                        name
-                      )}
-                    </span>
+                      </span>
+                      <Button
+                        onClick={() => Utils.copyFeatureName(name)}
+                        theme='icon'
+                        className='ms-2 me-2'
+                      >
+                        <Icon name='copy' />
+                      </Button>
+                      <SegmentOverridesIcon
+                        count={data.num_segment_overrides}
+                      />
+                      <IdentityOverridesIcon
+                        count={data.num_identity_overrides}
+                      />
+                    </Row>
                   </div>
                   <div
                     onClick={goUserLeft}

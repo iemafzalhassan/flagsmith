@@ -3,6 +3,11 @@ import data from 'common/data/base/_data'
 import UserSelect from './UserSelect'
 import ConfigProvider from 'common/providers/ConfigProvider'
 import Icon from './Icon'
+import { close } from 'ionicons/icons'
+import { IonIcon } from '@ionic/react'
+import { getProjectFlag } from 'common/services/useProjectFlag'
+import { getStore } from 'common/store'
+import SettingsButton from './SettingsButton'
 
 class TheComponent extends Component {
   state = {}
@@ -11,14 +16,13 @@ class TheComponent extends Component {
   }
 
   getData = () => {
-    data
-      .get(
-        `${Project.api}projects/${this.props.projectId}/features/${this.props.id}/`,
-      )
-      .then((res) => {
-        const owners = (res.owners || []).map((v) => v.id)
-        this.setState({ owners })
-      })
+    getProjectFlag(getStore(), {
+      id: this.props.id,
+      project: this.props.projectId,
+    }).then((res) => {
+      const owners = (res.data.owners || []).map((v) => v.id)
+      this.setState({ owners })
+    })
   }
 
   addOwner = (id) => {
@@ -53,31 +57,32 @@ class TheComponent extends Component {
           const ownerUsers = this.getOwners(users, this.state.owners || [])
           const res = (
             <div>
-              <Row
-                className='clickable'
+              <SettingsButton
                 onClick={() => {
                   if (hasPermission) this.setState({ showUsers: true })
                 }}
               >
-                <label className='cols-sm-2 control-label'>
-                  Assignees <Icon name='setting' width={20} fill={'#656D7B'} />
-                </label>
-              </Row>
+                Assigned users
+              </SettingsButton>
               <Row style={{ rowGap: '12px' }}>
                 {hasPermission &&
                   ownerUsers.map((u) => (
                     <Row
                       key={u.id}
                       onClick={() => this.removeOwner(u.id)}
-                      className='chip chip-user mr-2'
+                      className='chip mr-2'
                     >
                       <span className='font-weight-bold'>
                         {u.first_name} {u.last_name}
                       </span>
-                      <span className='chip-icon ion ion-ios-close' />
+                      <span className='chip-icon ion'>
+                        <IonIcon icon={close} />
+                      </span>
                     </Row>
                   ))}
-                {!ownerUsers.length && <div>This flag has no assignees</div>}
+                {!ownerUsers.length && (
+                  <div>This flag has no assigned users</div>
+                )}
               </Row>
 
               <UserSelect

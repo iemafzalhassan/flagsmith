@@ -1,18 +1,22 @@
-import React, { FC, useMemo, useState } from 'react'
+import React, { FC, useEffect, useMemo, useState } from 'react'
 import { filter as loFilter } from 'lodash'
 import { useHasPermission } from 'common/providers/Permission'
 import Utils from 'common/utils/utils'
 import InlineModal from 'components/InlineModal'
 import Constants from 'common/constants'
 import TagValues from './TagValues'
-import { useDeleteTagMutation, useGetTagsQuery } from 'common/services/useTag'
+import {
+  useCreateTagMutation,
+  useDeleteTagMutation,
+  useGetTagsQuery,
+} from 'common/services/useTag'
 import { Tag as TTag } from 'common/types/responses'
 import Tag from './Tag'
 import CreateEditTag from './CreateEditTag'
 import Input from 'components/base/forms/Input'
 import Button from 'components/base/forms/Button'
-import ModalHR from 'components/modals/ModalHR'
 import Icon from 'components/Icon'
+import TagUsage from 'components/TagUsage'
 
 type AddEditTagsType = {
   value?: number[]
@@ -35,12 +39,18 @@ const AddEditTags: FC<AddEditTagsType> = ({
   const [tag, setTag] = useState<TTag>()
   const [tab, setTab] = useState<'SELECT' | 'CREATE' | 'EDIT'>('SELECT')
   const [deleteTag] = useDeleteTagMutation()
+  const [createTag] = useCreateTagMutation()
   const { permission: projectAdminPermission } = useHasPermission({
     id: projectId,
     level: 'project',
     permission: 'ADMIN',
   })
 
+  useEffect(() => {
+    if (!isOpen) {
+      setTab('SELECT')
+    }
+  }, [isOpen])
   const selectTag = (tag: TTag) => {
     const _value = value || []
     const isSelected = _value?.includes(tag.id)
@@ -59,10 +69,19 @@ const AddEditTags: FC<AddEditTagsType> = ({
   }
 
   const confirmDeleteTag = (tag: TTag) => {
-    openConfirm(
-      'Please confirm',
-      'Are you sure you wish to delete this tag?',
-      () => {
+    openConfirm({
+      body: (
+        <div>
+          Are you sure you wish to delete the tag{' '}
+          <div className='d-inline-block'>
+            <Tag tag={tag} />
+          </div>
+          ? This action cannot be undone.
+          <TagUsage projectId={projectId} tag={tag.id} />
+        </div>
+      ),
+      destructive: true,
+      onYes: () => {
         onChange(loFilter(value || [], (id) => id !== tag.id))
         deleteTag({
           id: tag.id,
@@ -70,7 +89,9 @@ const AddEditTags: FC<AddEditTagsType> = ({
         })
         setIsOpen(true)
       },
-    )
+      title: 'Delete tag',
+      yesText: 'Confirm',
+    })
   }
 
   const filteredTags = useMemo(() => {
@@ -83,7 +104,28 @@ const AddEditTags: FC<AddEditTagsType> = ({
     return projectTags || []
   }, [filter, projectTags])
 
+  const exactTag = useMemo(() => {
+    const _filter = filter.toLowerCase()
+    if (_filter) {
+      return projectTags?.find((tag) => tag.label === filter)
+    }
+    return null
+  }, [filter, projectTags])
   const noTags = projectTags && !projectTags.length
+
+  const color =
+    Constants.tagColors[projectTags?.length || 0] || Constants.tagColors[0]
+  const submit = () => {
+    createTag({
+      projectId,
+      tag: { color, description: '', label: filter, project: projectId },
+    }).then((res) => {
+      if (!res?.error && res.data) {
+        selectTag(res.data)
+        setFilter('')
+      }
+    })
+  }
   return (
     <div>
       <Row className='inline-tags mt-2'>
@@ -96,19 +138,37 @@ const AddEditTags: FC<AddEditTagsType> = ({
       </Row>
       {tab === 'SELECT' && !noTags && (
         <InlineModal
-          title='Tags'
+          hideClose
+          title={
+            <Input
+              autoFocus
+              value={filter}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  submit()
+                }
+              }}
+              onChange={(e: InputEvent) =>
+                setFilter(Utils.safeParseEventValue(e))
+              }
+              size='xSmall'
+              className='full-width'
+              placeholder='Search tags...'
+              search
+            />
+          }
           isOpen={isOpen}
           onBack={() => setTab('SELECT')}
           showBack={tab !== 'SELECT'}
           onClose={toggle}
-          className='inline-modal--tags pb-0'
+          className='inline-modal--sm pb-0'
           bottom={
             !readOnly && (
               <div className='text-right'>
                 {Utils.renderWithPermission(
                   projectAdminPermission,
                   Constants.projectPermissions('Admin'),
-                  <div className='inline-modal__buttons'>
+                  <div className='text-center'>
                     <Button
                       className=''
                       disabled={!projectAdminPermission}
@@ -120,7 +180,6 @@ const AddEditTags: FC<AddEditTagsType> = ({
                     >
                       Add New Tag
                     </Button>
-                    ,
                   </div>,
                 )}
               </div>
@@ -128,25 +187,16 @@ const AddEditTags: FC<AddEditTagsType> = ({
           }
         >
           <div>
-            <Input
-              value={filter}
-              onChange={(e: InputEvent) =>
-                setFilter(Utils.safeParseEventValue(e))
-              }
-              className='full-width'
-              placeholder='Search tags...'
-              search
-            />
             {tagsLoading && !projectTags && (
               <div className='text-center'>
                 <Loader />
               </div>
             )}
-            <div className='tag-list'>
+            <div className='tag-list d-flex flex-column gap-4'>
               {filteredTags &&
                 filteredTags.map((tag) => (
                   <div key={tag.id}>
-                    <Row className='mt-4'>
+                    <Row>
                       <Flex>
                         <Tag
                           className='px-2 py-2'
@@ -155,28 +205,40 @@ const AddEditTags: FC<AddEditTagsType> = ({
                           tag={tag}
                         />
                       </Flex>
-                      {!readOnly && !!projectAdminPermission && (
-                        <>
-                          <div
-                            onClick={() => editTag(tag)}
-                            className='clickable'
-                          >
-                            <Icon name='setting' fill='#9DA4AE' />
-                          </div>
-                          <div
-                            onClick={() => confirmDeleteTag(tag)}
-                            className='ml-3 clickable'
-                          >
-                            <Icon name='trash-2' fill='#9DA4AE' />
-                          </div>
-                        </>
-                      )}
+                      {!readOnly &&
+                        !!projectAdminPermission &&
+                        !tag.is_system_tag && (
+                          <>
+                            <div
+                              onClick={() => editTag(tag)}
+                              className='clickable'
+                            >
+                              <Icon name='setting' fill='#9DA4AE' />
+                            </div>
+                            <div
+                              onClick={() => confirmDeleteTag(tag)}
+                              className='ml-3 clickable'
+                            >
+                              <Icon name='trash-2' fill='#9DA4AE' />
+                            </div>
+                          </>
+                        )}
                     </Row>
                   </div>
                 ))}
-              {projectTags && projectTags.length && !filteredTags.length ? (
-                <div className='text-center text-dark mt-4'>
-                  No results for "<strong>{filter}</strong>"
+              {!!filter && !exactTag ? (
+                <div
+                  onClick={submit}
+                  className='text-center flex-row text-dark justify-content-center'
+                >
+                  <div className='me-2'>Create</div>
+                  <Tag
+                    className='truncated-tag'
+                    tag={{
+                      color,
+                      label: filter,
+                    }}
+                  />
                 </div>
               ) : null}
               {noTags && (

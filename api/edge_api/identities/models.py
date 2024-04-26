@@ -4,19 +4,22 @@ from contextlib import suppress
 
 from django.db.models import Prefetch, Q
 from flag_engine.features.models import FeatureStateModel
-from flag_engine.identities.builders import build_identity_model
 from flag_engine.identities.models import IdentityFeaturesList, IdentityModel
 
 from api_keys.models import MasterAPIKey
+from edge_api.identities.tasks import (
+    generate_audit_log_records,
+    sync_identity_document_features,
+    update_flagsmith_environments_v2_identity_overrides,
+)
+from edge_api.identities.types import IdentityChangeset
+from edge_api.identities.utils import generate_change_dict
 from environments.dynamodb import DynamoIdentityWrapper
 from environments.models import Environment
 from features.models import FeatureState
 from features.multivariate.models import MultivariateFeatureStateValue
 from users.models import FFAdminUser
 from util.mappers import map_engine_identity_to_identity_document
-
-from .audit import generate_change_dict
-from .tasks import generate_audit_log_records, sync_identity_document_features
 
 
 class EdgeIdentity:
@@ -28,7 +31,7 @@ class EdgeIdentity:
 
     @classmethod
     def from_identity_document(cls, identity_document: dict) -> "EdgeIdentity":
-        return EdgeIdentity(build_identity_model(identity_document))
+        return EdgeIdentity(IdentityModel.model_validate(identity_document))
 
     @property
     def django_id(self) -> int:
@@ -161,7 +164,7 @@ class EdgeIdentity:
 
     def save(self, user: FFAdminUser = None, master_api_key: MasterAPIKey = None):
         self.dynamo_wrapper.put_item(self.to_document())
-        changes = self._get_changes(self._initial_state)
+        changes = self._get_changes()
         if changes["feature_overrides"]:
             # TODO: would this be simpler if we put a wrapper around FeatureStateModel instead?
             generate_audit_log_records.delay(
@@ -172,6 +175,14 @@ class EdgeIdentity:
                     "changes": changes,
                     "identity_uuid": str(self.identity_uuid),
                     "master_api_key_id": getattr(master_api_key, "id", None),
+                }
+            )
+            update_flagsmith_environments_v2_identity_overrides.delay(
+                kwargs={
+                    "environment_api_key": self.environment_api_key,
+                    "changes": changes,
+                    "identity_uuid": str(self.identity_uuid),
+                    "identifier": self.identifier,
                 }
             )
         self._reset_initial_state()
@@ -187,7 +198,8 @@ class EdgeIdentity:
     def to_document(self) -> dict:
         return map_engine_identity_to_identity_document(self._engine_identity_model)
 
-    def _get_changes(self, previous_instance: "EdgeIdentity") -> dict:
+    def _get_changes(self) -> IdentityChangeset:
+        previous_instance = self._initial_state
         changes = {}
         feature_changes = changes.setdefault("feature_overrides", {})
         previous_feature_overrides = {
@@ -201,7 +213,9 @@ class EdgeIdentity:
             current_matching_fs = current_feature_overrides.get(uuid_)
             if current_matching_fs is None:
                 feature_changes[previous_fs.feature.name] = generate_change_dict(
-                    change_type="-", identity=self, old=previous_fs
+                    change_type="-",
+                    identity_id=self.id,
+                    old=previous_fs,
                 )
             elif (
                 current_matching_fs.enabled != previous_fs.enabled
@@ -210,7 +224,7 @@ class EdgeIdentity:
             ):
                 feature_changes[previous_fs.feature.name] = generate_change_dict(
                     change_type="~",
-                    identity=self,
+                    identity_id=self.id,
                     new=current_matching_fs,
                     old=previous_fs,
                 )
@@ -218,10 +232,29 @@ class EdgeIdentity:
         for uuid_, previous_fs in current_feature_overrides.items():
             if uuid_ not in previous_feature_overrides:
                 feature_changes[previous_fs.feature.name] = generate_change_dict(
-                    change_type="+", identity=self, new=previous_fs
+                    change_type="+",
+                    identity_id=self.id,
+                    new=previous_fs,
                 )
 
         return changes
 
     def _reset_initial_state(self):
         self._initial_state = copy.deepcopy(self)
+
+    def clone_flag_states_from(self, source_identity: "EdgeIdentity") -> None:
+        """
+        Clone the feature states from the source identity to the target identity.
+        """
+        # Delete identity_target's feature states
+        for feature_state in list(self.feature_overrides):
+            self.remove_feature_override(feature_state=feature_state)
+
+        # Clone identity_source's feature states to identity_target
+        for feature_in_source in source_identity.feature_overrides:
+            feature_state_target = FeatureStateModel(
+                feature=feature_in_source.feature,
+                feature_state_value=feature_in_source.feature_state_value,
+                enabled=feature_in_source.enabled,
+            )
+            self.add_feature_override(feature_state_target)

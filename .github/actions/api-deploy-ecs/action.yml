@@ -50,10 +50,6 @@ inputs:
     description: The flagsmith-saml repo git revision to use when building deployment package.
     required: false
     default: main
-  flagsmith_workflows_revision:
-    description: The flagsmith-workflows repo git revision to use when building deployment package.
-    required: false
-    default: main
   flagsmith_auth_controller_revision:
     description: The flagsmith-auth-controller git revision to use when building deployment package.
     required: false
@@ -62,6 +58,10 @@ inputs:
     description: The flagsmith-rbac git revision to use when building deployment package.
     required: false
     default: main
+  sse_pgp_private_key:
+    description: Private PGP key used for encrypting/decrypting access logs
+    required: true
+
 outputs:
   api_ecr_image_url:
     description: The image URL from ECR
@@ -72,7 +72,7 @@ runs:
 
   steps:
     - name: Checkout SAML package
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: flagsmith/flagsmith-saml
         token: ${{ inputs.github_access_token }}
@@ -83,20 +83,8 @@ runs:
       run: mv ./flagsmith-saml/saml ./api
       shell: bash
 
-    - name: Checkout Workflows Logic package
-      uses: actions/checkout@v3
-      with:
-        repository: flagsmith/flagsmith-workflows
-        token: ${{ inputs.github_access_token }}
-        ref: ${{ inputs.flagsmith_workflows_revision }}
-        path: ./flagsmith-workflows
-
-    - name: Integrate Workflows Logic module
-      run: mv ./flagsmith-workflows/workflows_logic ./api/features/workflows/logic
-      shell: bash
-
     - name: Checkout Auth Controller package
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: flagsmith/flagsmith-auth-controller
         token: ${{ inputs.github_access_token }}
@@ -108,7 +96,7 @@ runs:
       shell: bash
 
     - name: Checkout RBAC module
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: flagsmith/flagsmith-rbac
         token: ${{ inputs.github_access_token }}
@@ -127,7 +115,11 @@ runs:
     - name: Write git info to Docker image
       run: |
         echo ${{ github.sha }} > api/CI_COMMIT_SHA
-        echo '${{ github.ref_name }}' > api/IMAGE_TAG
+      shell: bash
+
+    - name: Write file to indicate SaaS
+      run: |
+        echo '' > api/SAAS_DEPLOYMENT
       shell: bash
 
     - name: Configure AWS Credentials
@@ -141,6 +133,13 @@ runs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
+    - name: Write PGP key to a file
+      run: |
+        cat << EOF > sse_pgp_pkey
+        ${{ inputs.sse_pgp_private_key }}
+        EOF
+      shell: bash
+
     - name: Build, tag, and push image to Amazon ECR
       id: build-image
       env:
@@ -150,8 +149,7 @@ runs:
       run: |
         echo "Building docker image with URL: "
         echo $ECR_REPOSITORY:$IMAGE_TAG
-        cd api
-        docker build -t $ECR_REPOSITORY:$IMAGE_TAG -f Dockerfile --build-arg SAML_INSTALLED=1 --build-arg POETRY_OPTS="--with saml,auth-controller" .
+        docker build --secret id=sse_pgp_pkey,src=./sse_pgp_pkey -t $ECR_REPOSITORY:$IMAGE_TAG -f api/Dockerfile --build-arg SAML_INSTALLED=1 --build-arg POETRY_OPTS="--with saml,auth-controller,workflows" --build-arg GH_TOKEN=${{ inputs.github_access_token }} .
         docker push $ECR_REPOSITORY:$IMAGE_TAG
         echo "image=$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
       shell: bash

@@ -31,12 +31,13 @@ const InputGroup = class extends Component {
             title={
               <label htmlFor={id} className='cols-sm-2 control-label'>
                 <div>
-                  {props.title} <Icon name='info-outlined' />{' '}
+                  {props.title}{' '}
+                  {!props.hideTooltipIcon && <Icon name='info-outlined' />}{' '}
                   {props.unsaved && <div className='unread'>Unsaved</div>}
                 </div>
               </label>
             }
-            place={this.props.tooltipPlace || 'right'}
+            place={this.props.tooltipPlace || 'top'}
           >
             {this.props.tooltip}
           </Tooltip>
@@ -99,23 +100,22 @@ const InputGroup = class extends Component {
                   size={size}
                 />
               )}
-              {inputProps && inputProps.error && (
-                <span>
-                  <span
-                    id={
-                      props.inputProps.name
-                        ? `${props.inputProps.name}-error`
-                        : ''
-                    }
-                    className='text-danger'
-                  >
-                    {inputProps.error}
-                  </span>
-                </span>
-              )}
             </div>
           )}
         </div>
+        {inputProps && inputProps.error && (
+          <span>
+            <span
+              id={props.inputProps.name ? `${props.inputProps.name}-error` : ''}
+              className='text-danger'
+            >
+              {typeof inputProps.error === 'string'
+                ? inputProps.error
+                : !!inputProps.error?.length &&
+                  inputProps.error.map((err, i) => <div key={i}>{err}</div>)}
+            </span>
+          </span>
+        )}
       </div>
     )
   }
@@ -123,6 +123,7 @@ const InputGroup = class extends Component {
 
 InputGroup.propTypes = {
   disabled: OptionalBool,
+  hideTooltipIcon: OptionalBool,
   inputProps: OptionalObject,
   isValid: propTypes.any,
   onChange: OptionalFunc,

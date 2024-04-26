@@ -13,12 +13,11 @@ found in the following section entitled 'Databases'.
 cd api
 make install
 make django-migrate
-python manage.py createcachetable
 make serve
 ```
 
 You can now visit `http://<your-server-domain:8000>/api/v1/users/config/init/` to create an initial Superuser and
-provide DNS settings for your installation.
+provide DNS settings for your installation or run `make test` from the `api` directory to run the test suite.
 
 Note: if you're running on on MacOS and you find some issues installing the dependencies (specifically around pyre2),
 you may need to run the following:
@@ -32,9 +31,8 @@ the above steps as it gives you hot reloading. To run using docker compose, run 
 root:
 
 ```bash
-git clone https://github.com/Flagsmith/self-hosted.git
-cd self-hosted
-docker-compose up
+curl -o docker-compose.yml https://raw.githubusercontent.com/Flagsmith/flagsmith/main/docker-compose.yml
+docker-compose -f docker-compose.yml up
 ```
 
 ## Databases
@@ -46,7 +44,7 @@ The app is configured to use PostgreSQL for all environments.
 When running locally, you'll need a local instance of postgres running. The easiest way to do this is to use docker
 which is achievable with the following command:
 
-`docker-compose -f docker/db.yaml up -d`
+`docker-compose -f docker/db.yml up -d`
 
 You'll also need to ensure that you have a value for POSTGRES_PASSWORD set as an environment variable on your
 development machine.
@@ -56,23 +54,6 @@ variable called `DATABASE_URL`. This should be configured in the Heroku-ish appl
 
 When running the application using Docker, it reads the database configuration from the settings located in
 `app.settings.production`
-
-### Replication
-
-Flagsmith can be set up to handle as many read replicas as needed. To add replicas, you'll need to set the
-`REPLICA_DATABASE_URLS` environment variable with a comma separated list of database urls.
-
-Example:
-
-```
-REPLICA_DATABASE_URLS: postgres://user:password@replica1.database.host:5432/flagsmith,postgres://user:password@replica2.database.host:5432/flagsmith
-```
-
-:::tip
-
-Use the `REPLICA_DATABASE_URLS_DELIMITER` environment variable if you are using any `,` characters in your passwords.
-
-:::
 
 ## Initialising
 
@@ -109,41 +90,19 @@ application.
 Further information on the admin pages can be found [here](/deployment/configuration/django-admin).
 
 [^1]:
-    Your Flagsmith's domain can also be configured via the `FLAGSMITH_DOMAIN` environment variable. See the
-    [full list](#application-environment-variables) of variables used for configuration.
+
+Your Flagsmith's domain can also be configured via the `FLAGSMITH_DOMAIN` environment variable. See the
+[full list](#application-environment-variables) of variables used for configuration.
 
 ## Deploying
 
-### Using Heroku-ish Platform (e.g. Heroku, Dokku, Flynn)
-
-The application should run on any Heroku-ish platform (e.g. Dokku) by adding the required git repo and pushing the code.
-The code for running the app is contained in the Procfile.
-
-To get it running, you'll need to add the necessary config variables as outlined below.
-
-### Using ElasticBeanstalk
-
-The application will run within ElasticBeanstalk using the default Python setup. We've included the .ebextensions/ and
-.elasticbeanstalk/ directories which will run on ElasticBeanstalk.
-
-The changes required to run in your environment will be as follows
-
-`.elasticbeanstalk/config.yml` - update application_name and default_region to the relevant variables for your setup.
-
-`.ebextensions/options.config` - within the root of the project `generate.sh` will add in all environment variables that
-are required using your chosen CI/CD. Alternatively, you can add your own `options.config`.
-
 ### Using Docker
 
-If you want to run the entire Flagsmith platform, including the front end dashboard, take a look at our
-[Flagsmith Docker repository](https://github.com/Flagsmith/self-hosted).
-
-The application can be configured to run using docker with the following command:
+If you want to run the entire Flagsmith platform, including the front end dashboard:
 
 ```bash
-git clone https://github.com/Flagsmith/self-hosted.git
-cd self-hosted
-docker-compose up
+curl -o docker-compose.yml https://raw.githubusercontent.com/Flagsmith/flagsmith/main/docker-compose.yml
+docker-compose -f docker-compose.yml up
 ```
 
 This will use some default settings created in the `docker-compose.yml` file located in the root of the project. These
@@ -184,14 +143,25 @@ the below variables will be ignored.
 
 #### Application Environment Variables
 
-- `ENV`: string representing the current running environment, e.g. 'local', 'dev', 'prod'. Defaults to 'local'
+- `ENVIRONMENT`: string representing the current running environment, such as "local", "dev", "staging" or "production".
+  Defaults to 'local'
 - `DJANGO_SECRET_KEY`: secret key required by Django, if one isn't provided one will be created using
   `django.core.management.utils.get_random_secret_key`. WARNING: If running multiple API instances, its vital that you
   define a shared DJANGO_SECRET_KEY.
 - `LOG_LEVEL`: DJANGO logging level. Can be one of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
-- `ACCESS_LOG_LOCATION`: The location to store web logs generated by gunicorn if running as a Docker container. If not
-  set, no logs will be stored. If set to `-` the logs will be sent to `stdout`.
+- `LOG_FORMAT`: Can be `generic` (plain-text) or `json`. Defaults to `generic`.
+- `GUNICORN_CMD_ARGS`: Gunicorn command line arguments. Overrides Flagsmith's defaults. See
+  [Gunicorn documentation](https://docs.gunicorn.org/en/stable/settings.html) for reference.
+- `ACCESS_LOG_FORMAT`: Message format for Gunicorn's access log. See
+  [variable details](https://docs.gunicorn.org/en/stable/settings.html#access-log-format) to define your own format.
+- `ACCESS_LOG_LOCATION`: The location to store web logs generated by Gunicorn if running as a Docker container. If not
+  set, no logs will be stored. If set to `-`, the logs will be sent to `stdout`.
 - `DJANGO_SETTINGS_MODULE`: python path to settings file for the given environment, e.g. "app.settings.develop"
+- `ALLOW_ADMIN_INITIATION_VIA_CLI`: Enables the `bootstrap` management command which creates default admin user,
+  organisation, and project.
+- `ADMIN_EMAIL`: Email to use for the default superuser creation.
+- `ORGANISATION_NAME`: Organisation name to use for the default organisation.
+- `PROJECT_NAME` Project name to use for the default project.
 - `ENABLE_GZIP_COMPRESSION`: If Django should gzip compress HTTP responses. Defaults to `False`.
 - `GOOGLE_ANALYTICS_KEY`: if google analytics is required, add your tracking code
 - `GOOGLE_SERVICE_ACCOUNT`: service account json for accessing the google API, used for getting usage of an
@@ -238,12 +208,22 @@ the below variables will be ignored.
   String. Connection string to set up Flagsmith to send telemetry to Azure Application Insights.
 - [`OPENCENSUS_SAMPLING_RATE`](https://opencensus.io/tracing/sampling/probabilistic/): Float. The tracer sample rate.
 - `RESTRICT_ORG_CREATE_TO_SUPERUSERS`: Restricts all users from creating organisations unless they are
-  [marked as a superuser](/deployment/configuration/django-admin#Authentication).
+  [marked as a superuser](/deployment/configuration/django-admin#authentication).
 - `FLAGSMITH_CORS_EXTRA_ALLOW_HEADERS`: Comma separated list of extra headers to allow when operating across domains.
   e.g. `'my-custom-header-1,my-custom-header-2'`. Defaults to `'sentry-trace,'`.
 - `FLAGSMITH_DOMAIN`: A custom domain for URLs pointing to your Flagsmith instance in email notifications. Note: if set,
   the domain provided during [initial configuration](#environments-with-no-direct-console-access-eg-heroku-ecs) will be
   ignored.
+- `DISABLE_FLAGSMITH_UI`: Disable the Flagsmith UI which can be rendered by the API containers in a single container
+  environment. Use `True` to disable, defaults to `False`.
+- `SEGMENT_CONDITION_VALUE_LIMIT`: Configure the size of the segment condition value in bytes. Default is 1000.
+  Minimum 0. Maximum 2000000 (2MB). Note that this environment variable changes the length of the column in the database
+  and hence should not be modified for already running instances of flagsmith. It should only be used for new
+  installations, and should not be modified. WARNING: setting this to a higher limit may prevent imports to our SaaS
+  platform if required in the future.
+- `ENABLE_API_USAGE_TRACKING`: Enable tracking of all API requests in Postgres / Influx. Default is True. Setting to
+  False will mean that the Usage tab in the Organisation Settings will not show any data. Useful when using Postgres for
+  analytics in high traffic environments to limit the size of database.
 
 #### Security Environment Variables
 
@@ -344,7 +324,7 @@ metrics from external services.
 version: '3'
 services:
  postgres:
-  image: postgres:11.12-alpine
+  image: postgres:15.5-alpine
   environment:
    POSTGRES_PASSWORD: password
    POSTGRES_DB: flagsmith
@@ -437,9 +417,19 @@ You can run Flagsmith as a single application/docker container using our unified
 [Docker Hub](https://hub.docker.com/repository/docker/flagsmith/flagsmith) but you can also run the front end as part of
 the Django Application. Steps to do this:
 
-1. `cd frontend; npm run bundledjango`
-2. `cd ../api; python manage.py collectstatic`
-3. `python manage.py runserver`
+```bash
+# Update packages and build django.
+cd frontend
+npm install
+npm run bundledjango
+
+# Copy additional assets with Django
+cd ../api
+python manage.py collectstatic
+
+# Boot the server
+python manage.py runserver
+```
 
 ### How it works
 

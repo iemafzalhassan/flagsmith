@@ -45,6 +45,7 @@ class OrganisationSerializerFull(serializers.ModelSerializer):
             "persist_trait_data",
             "block_access_to_admin",
             "restrict_project_create_to_admin",
+            "force_2fa",
         )
         read_only_fields = (
             "id",
@@ -245,3 +246,9 @@ class SubscriptionDetailsSerializer(serializers.Serializer):
     payment_source = serializers.ChoiceField(choices=[None, CHARGEBEE], allow_null=True)
 
     chargebee_email = serializers.EmailField()
+
+
+class OrganisationAPIUsageNotificationSerializer(serializers.Serializer):
+    organisation_id = serializers.IntegerField()
+    percent_usage = serializers.IntegerField()
+    notified_at = serializers.DateTimeField()

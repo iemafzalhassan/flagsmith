@@ -8,8 +8,8 @@ from django.conf import settings
 from django.core.cache import caches
 from django.db import models
 from django.db.models import Count
-from django.utils import timezone
 from django_lifecycle import (
+    AFTER_DELETE,
     AFTER_SAVE,
     AFTER_UPDATE,
     BEFORE_CREATE,
@@ -17,6 +17,7 @@ from django_lifecycle import (
     hook,
 )
 
+from environments.dynamodb import DynamoProjectMetadata
 from organisations.models import Organisation
 from permissions.models import (
     PROJECT_PERMISSION_TYPE,
@@ -24,10 +25,20 @@ from permissions.models import (
     PermissionModel,
 )
 from projects.managers import ProjectManager
-from projects.tasks import write_environments_to_dynamodb
+from projects.tasks import (
+    handle_cascade_delete,
+    migrate_project_environments_to_v2,
+    write_environments_to_dynamodb,
+)
 
 project_segments_cache = caches[settings.PROJECT_SEGMENTS_CACHE_LOCATION]
 environment_cache = caches[settings.ENVIRONMENT_CACHE_NAME]
+
+
+class IdentityOverridesV2MigrationStatus(models.TextChoices):
+    NOT_STARTED = "NOT_STARTED", "Not Started"
+    IN_PROGRESS = "IN_PROGRESS", "In Progress"
+    COMPLETE = "COMPLETE", "Complete"
 
 
 class Project(LifecycleModelMixin, SoftDeleteExportableModel):
@@ -70,6 +81,17 @@ class Project(LifecycleModelMixin, SoftDeleteExportableModel):
     max_segment_overrides_allowed = models.IntegerField(
         default=100,
         help_text="Max segments overrides allowed for any (one) environment within this project",
+    )
+    identity_overrides_v2_migration_status = models.CharField(
+        max_length=50,
+        choices=IdentityOverridesV2MigrationStatus.choices,
+        # Note that the default is actually set dynamically by a lifecycle hook on create
+        # since we need to know whether edge is enabled or not.
+        default=IdentityOverridesV2MigrationStatus.NOT_STARTED,
+    )
+    stale_flags_limit_days = models.IntegerField(
+        default=30,
+        help_text="Number of days without modification in any environment before a flag is considered stale.",
     )
 
     objects = ProjectManager()
@@ -114,10 +136,14 @@ class Project(LifecycleModelMixin, SoftDeleteExportableModel):
 
     @hook(BEFORE_CREATE)
     def set_enable_dynamo_db(self):
-        self.enable_dynamo_db = self.enable_dynamo_db or (
-            settings.EDGE_RELEASE_DATETIME is not None
-            and settings.EDGE_RELEASE_DATETIME < timezone.now()
-        )
+        self.enable_dynamo_db = self.enable_dynamo_db or settings.EDGE_ENABLED
+
+    @hook(BEFORE_CREATE)
+    def set_identity_overrides_v2_migration_status(self):
+        if settings.EDGE_ENABLED:
+            self.identity_overrides_v2_migration_status = (
+                IdentityOverridesV2MigrationStatus.COMPLETE
+            )
 
     @hook(AFTER_SAVE)
     def clear_environments_cache(self):
@@ -125,9 +151,26 @@ class Project(LifecycleModelMixin, SoftDeleteExportableModel):
             list(self.environments.values_list("api_key", flat=True))
         )
 
+    @hook(
+        AFTER_SAVE,
+        when="identity_overrides_v2_migration_status",
+        has_changed=True,
+        is_now=IdentityOverridesV2MigrationStatus.IN_PROGRESS,
+    )
+    def trigger_environments_v2_migration(self) -> None:
+        migrate_project_environments_to_v2.delay(kwargs={"project_id": self.id})
+
     @hook(AFTER_UPDATE)
     def write_to_dynamo(self):
         write_environments_to_dynamodb.delay(kwargs={"project_id": self.id})
+
+    @hook(AFTER_DELETE)
+    def clean_up_dynamo(self):
+        DynamoProjectMetadata(self.id).delete()
+
+    @hook(AFTER_DELETE)
+    def handle_cascade_delete(self) -> None:
+        handle_cascade_delete.delay(kwargs={"project_id": self.id})
 
     @property
     def is_edge_project_by_default(self) -> bool:
@@ -147,6 +190,13 @@ class Project(LifecycleModelMixin, SoftDeleteExportableModel):
         return (
             not self.feature_name_regex
             or re.match(f"^{self.feature_name_regex}$", feature_name) is not None
+        )
+
+    @property
+    def show_edge_identity_overrides_for_feature(self) -> bool:
+        return (
+            self.identity_overrides_v2_migration_status
+            == IdentityOverridesV2MigrationStatus.COMPLETE
         )
 
 
@@ -182,7 +232,11 @@ class UserPermissionGroupProjectPermission(AbstractBasePermissionModel):
 
 
 class UserProjectPermission(AbstractBasePermissionModel):
-    user = models.ForeignKey("users.FFAdminUser", on_delete=models.CASCADE)
+    user = models.ForeignKey(
+        "users.FFAdminUser",
+        on_delete=models.CASCADE,
+        related_name="project_permissions",
+    )
     project = models.ForeignKey(
         Project, on_delete=models.CASCADE, related_query_name="userpermission"
     )

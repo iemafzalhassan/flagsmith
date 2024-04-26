@@ -1,9 +1,14 @@
 import React, { Component } from 'react'
-import _data from 'common/data/base/_data'
 import ProjectStore from 'common/stores/project-store'
 import Token from './Token'
 import ModalHR from './modals/ModalHR'
 import Icon from './Icon'
+import { getStore } from 'common/store'
+import {
+  createServersideEnvironmentKeys,
+  deleteServersideEnvironmentKeys,
+  getServersideEnvironmentKeys,
+} from 'common/services/useServersideEnvironmentKey'
 
 class CreateServerSideKeyModal extends Component {
   state = {}
@@ -92,11 +97,10 @@ class ServerSideSDKKeys extends Component {
       <CreateServerSideKeyModal
         environmentId={this.props.environmentId}
         onSubmit={(name) => {
-          _data
-            .post(
-              `${Project.api}environments/${this.props.environmentId}/api-keys/`,
-              { name },
-            )
+          createServersideEnvironmentKeys(getStore(), {
+            data: { name },
+            environmentId: this.props.environmentId,
+          })
             .then(() => this.fetch(this.props.environmentId))
             .finally(() => {
               closeModal()
@@ -108,71 +112,70 @@ class ServerSideSDKKeys extends Component {
   }
 
   remove = (id, name) => {
-    openConfirm(
-      'Delete Server-side Environment Keys',
-      <div>
-        The key <strong>{name}</strong> will be permanently deleted, are you
-        sure?
-      </div>,
-      () => {
+    openConfirm({
+      body: (
+        <div>
+          Are you sure you want to remove the SDK key <strong>{name}</strong>?
+          This action cannot be undone.
+        </div>
+      ),
+      destructive: true,
+      onYes: () => {
         this.setState({ isSaving: true })
-        _data
-          .delete(
-            `${Project.api}environments/${this.props.environmentId}/api-keys/${id}`,
-          )
+        deleteServersideEnvironmentKeys(getStore(), {
+          environmentId: this.props.environmentId,
+          id,
+        })
           .then(() => this.fetch(this.props.environmentId))
           .finally(() => {
             this.setState({ isSaving: false })
           })
       },
-    )
+      title: 'Delete Server-side Environment Keys',
+      yesText: 'Confirm',
+    })
   }
 
   fetch = (environmentId) => {
     this.setState({ isLoading: true })
-    return _data
-      .get(`${Project.api}environments/${environmentId}/api-keys/`)
-      .then((keys) => {
-        this.setState({ isLoading: false, keys })
-      })
-      .catch(() => {
-        this.setState({ isLoading: false })
-      })
+    return getServersideEnvironmentKeys(
+      getStore(),
+      { environmentId },
+      { forceRefetch: true },
+    ).then((res) => {
+      this.setState({ isLoading: false, keys: res.data })
+    })
   }
 
   render() {
     return (
-      <FormGroup className='m-y-3'>
-        <Row className='mb-3' space>
-          <div className='col-md-8 pl-0'>
-            <h5 className='m-b-0'>Server-side Environment Keys</h5>
-            <p className='fs-small lh-sm'>
-              Flags can be evaluated locally within your own Server environments
-              using our{' '}
-              <Button
-                theme='text'
-                href='https://docs.flagsmith.com/clients/overview'
-                target='__blank'
-              >
-                Server-side Environment Keys
-              </Button>
-              .
-            </p>
-            <p className='fs-small lh-sm'>
-              Server-side SDKs should be initialised with a Server-side
-              Environment Key.
-            </p>
-          </div>
-          <div className='col-md-4 pr-0'>
+      <FormGroup className='my-4'>
+        <div className='col-md-6'>
+          <h5 className='mb-2'>Server-side Environment Keys</h5>
+          <p className='fs-small lh-sm mb-0'>
+            Flags can be evaluated locally within your own Server environments
+            using our{' '}
             <Button
-              onClick={this.createKey}
-              className='float-right'
-              disabled={this.state.isSaving}
+              theme='text'
+              href='https://docs.flagsmith.com/clients/overview#server-side-sdks'
+              target='__blank'
             >
-              Create Server-side Environment Key
+              Server-side Environment Keys
             </Button>
-          </div>
-        </Row>
+            .
+          </p>
+          <p className='fs-small lh-sm mb-0'>
+            Server-side SDKs should be initialised with a Server-side
+            Environment Key.
+          </p>
+          <Button
+            onClick={this.createKey}
+            className='my-4'
+            disabled={this.state.isSaving}
+          >
+            Create Server-side Environment Key
+          </Button>
+        </div>
         {this.state.isLoading && (
           <div className='text-center'>
             <Loader />
@@ -198,6 +201,15 @@ class ServerSideSDKKeys extends Component {
                 <div className='table-column'>
                   <Token style={{ width: 280 }} token={key} />
                 </div>
+                <Button
+                  onClick={() => {
+                    navigator.clipboard.writeText(key)
+                    toast('Copied')
+                  }}
+                  className='ml-2 btn-with-icon'
+                >
+                  <Icon name='copy' width={20} fill='#656D7B' />
+                </Button>
                 <div className='table-column'>
                   <Button
                     onClick={() => this.remove(id, name)}

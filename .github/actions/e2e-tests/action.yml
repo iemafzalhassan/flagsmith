@@ -11,13 +11,16 @@ inputs:
   environment:
     description: The value of the ENV environment variable to use for npm run env.
     required: true
+  tests:
+    description: The space separated list of E2E tests to be executed.
+    required: false
 
 runs:
   using: composite
 
   steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-node@v3
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
       with:
         cache: npm
         node-version-file: frontend/.nvmrc
@@ -41,5 +44,5 @@ runs:
       run: |
         node -v
         npm run env
-        npm run test
+        npm run test -- ${{ inputs.tests }}
       shell: bash

@@ -28,13 +28,8 @@ For flags that contain remote config values, Flagsmith will pass the value of th
 
 :::
 
-Identity flag values are passed into Mixpanel.
-
-Here's a demo user in Flagsmith:
-
-![Mixpanel](/img/integrations/mixpanel/mixpanel-integration-2.png)
-
-If we make the call to the Flagsmith API to get the flags for this user:
+Identity flag values are passed into Mixpanel. If we make the call to the Flagsmith API to get the flags for an
+Identity:
 
 ```bash
 curl 'https://edge.api.flagsmith.com/api/v1/identities/?identifier=development_user_123456' \
@@ -88,5 +83,4 @@ to copy the relevant data from Mixpanel into Flagsmith.
 
 Set up a webhook that accepts Mixpanel cohort data as described
 [here](https://developer.mixpanel.com/docs/cohort-webhooks), then write the cohorts as Traits within the relevant
-Identities. You can send Trait data either using our SDKs or with a REST query as defined in our
-[API docs](/api/bulk-insert-identities-overwrite).
+Identities. You can send Trait data either using our SDKs or with a REST query as defined in our [API docs](/api).

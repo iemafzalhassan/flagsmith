@@ -1,5 +1,6 @@
 import React from 'react'
 import FeatureListStore from 'common/stores/feature-list-store'
+import ProjectStore from 'common/stores/project-store'
 
 const FeatureListProvider = class extends React.Component {
   static displayName = 'FeatureListProvider'
@@ -11,8 +12,9 @@ const FeatureListProvider = class extends React.Component {
       isLoading: FeatureListStore.isLoading,
       isSaving: FeatureListStore.isSaving,
       lastSaved: FeatureListStore.getLastSaved(),
+      maxFeaturesAllowed: ProjectStore.getMaxFeaturesAllowed(),
       projectFlags: FeatureListStore.getProjectFlags(),
-      usageData: FeatureListStore.getFeatureUsage(),
+      totalFeatures: ProjectStore.getTotalFeatures(),
     }
     ES6Component(this)
     this.listenTo(FeatureListStore, 'change', () => {
@@ -22,13 +24,15 @@ const FeatureListProvider = class extends React.Component {
         isLoading: FeatureListStore.isLoading,
         isSaving: FeatureListStore.isSaving,
         lastSaved: FeatureListStore.getLastSaved(),
+        maxFeaturesAllowed: ProjectStore.getMaxFeaturesAllowed(),
         projectFlags: FeatureListStore.getProjectFlags(),
+        totalFeatures: ProjectStore.getTotalFeatures(),
         usageData: FeatureListStore.getFeatureUsage(),
       })
     })
 
-    this.listenTo(FeatureListStore, 'saved', () => {
-      this.props.onSave && this.props.onSave()
+    this.listenTo(FeatureListStore, 'saved', (isCreate) => {
+      this.props.onSave && this.props.onSave(isCreate)
     })
 
     this.listenTo(FeatureListStore, 'problem', () => {
@@ -43,13 +47,30 @@ const FeatureListProvider = class extends React.Component {
     })
   }
 
-  toggleFlag = (i, environments, comment, environmentFlags, projectFlags) => {
-    AppActions.toggleFlag(
-      i,
-      environments,
-      comment,
-      environmentFlags,
-      projectFlags,
+  toggleFlag = (projectId, environmentId, projectFlag, environmentFlag) => {
+    this.editFeatureValue(
+      projectId,
+      environmentId,
+      /* todo: Saving features involves sending an adjusted project flag rather than a feature state (old tech debt).
+       This will be removed when migrating to RTK. The following converts the feature state to the accepted format.
+      */
+      {
+        ...projectFlag,
+        default_enabled: !environmentFlag.enabled,
+        initial_value: environmentFlag.feature_state_value,
+        multivariate_options: projectFlag.multivariate_options.map((mv) => {
+          const matching =
+            environmentFlag.multivariate_feature_state_values.find(
+              (v) => v.multivariate_feature_option == mv.id,
+            )
+          return {
+            ...mv,
+            default_percentage_allocation: matching.percentage_allocation,
+          }
+        }),
+      },
+      projectFlag,
+      environmentFlag,
     )
   }
 

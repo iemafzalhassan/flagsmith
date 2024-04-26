@@ -4,6 +4,8 @@
 import MaskedInput from 'react-maskedinput'
 import cn from 'classnames'
 import Icon from 'components/Icon'
+import Radio from './Radio'
+import Checkbox from './Checkbox'
 
 const maskedCharacters = {
   'a': {
@@ -105,6 +107,26 @@ const Input = class extends React.Component {
       sizeClassNames[size],
     )
 
+    if (this.props.type === 'checkbox') {
+      return (
+        <Checkbox
+          label={this.props.label}
+          value={this.props.value}
+          onChange={this.props.onChange}
+          checked={!!this.props.value}
+        />
+      )
+    } else if (this.props.type === 'radio') {
+      return (
+        <Radio
+          label={this.props.label}
+          value={this.props.value}
+          onChange={this.props.onChange}
+          checked={!!this.props.value}
+        />
+      )
+    }
+
     return (
       <div className={className}>
         {mask ? (
@@ -171,7 +193,10 @@ const Input = class extends React.Component {
               sizeClassNames[size],
             )}
           >
-            <Icon name='search' width={20} />
+            <Icon
+              name='search'
+              width={this.props.size === 'xSmall' ? 16 : 20}
+            />
           </span>
         )}
       </div>

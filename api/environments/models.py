@@ -16,8 +16,10 @@ from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 from django_lifecycle import (
     AFTER_CREATE,
+    AFTER_DELETE,
     AFTER_SAVE,
     AFTER_UPDATE,
+    BEFORE_UPDATE,
     LifecycleModel,
     hook,
 )
@@ -36,12 +38,15 @@ from environments.api_keys import (
 )
 from environments.dynamodb import (
     DynamoEnvironmentAPIKeyWrapper,
+    DynamoEnvironmentV2Wrapper,
     DynamoEnvironmentWrapper,
 )
 from environments.exceptions import EnvironmentHeaderNotPresentError
 from environments.managers import EnvironmentManager
 from features.models import Feature, FeatureSegment, FeatureState
+from features.versioning.exceptions import FeatureVersioningError
 from metadata.models import Metadata
+from projects.models import IdentityOverridesV2MigrationStatus, Project
 from segments.models import Segment
 from util.mappers import map_environment_to_environment_document
 from webhooks.models import AbstractBaseExportableWebhookModel
@@ -51,14 +56,20 @@ logger = logging.getLogger(__name__)
 environment_cache = caches[settings.ENVIRONMENT_CACHE_NAME]
 environment_document_cache = caches[settings.ENVIRONMENT_DOCUMENT_CACHE_LOCATION]
 environment_segments_cache = caches[settings.ENVIRONMENT_SEGMENTS_CACHE_NAME]
+bad_environments_cache = caches[settings.BAD_ENVIRONMENTS_CACHE_LOCATION]
 
 # Intialize the dynamo environment wrapper(s) globaly
 environment_wrapper = DynamoEnvironmentWrapper()
+environment_v2_wrapper = DynamoEnvironmentV2Wrapper()
 environment_api_key_wrapper = DynamoEnvironmentAPIKeyWrapper()
 
 
 class Environment(
-    LifecycleModel, abstract_base_auditable_model_factory(), SoftDeleteObject
+    LifecycleModel,
+    abstract_base_auditable_model_factory(
+        change_details_excluded_fields=["updated_at"]
+    ),
+    SoftDeleteObject,
 ):
     history_record_class_path = "environments.models.HistoricalEnvironment"
     related_object_type = RelatedObjectType.ENVIRONMENT
@@ -75,7 +86,9 @@ class Environment(
             " Environment. New default Feature States will be created for the new"
             " selected projects Features for this Environment."
         ),
-        on_delete=models.CASCADE,
+        # Cascade deletes are decouple from the Django ORM. See this PR for details.
+        # https://github.com/Flagsmith/flagsmith/pull/3360/
+        on_delete=models.DO_NOTHING,
     )
 
     api_key = models.CharField(
@@ -123,26 +136,30 @@ class Environment(
 
     objects = EnvironmentManager()
 
+    use_v2_feature_versioning = models.BooleanField(default=False)
+
     class Meta:
         ordering = ["id"]
 
     @hook(AFTER_CREATE)
     def create_feature_states(self):
-        features = self.project.features.all()
-        for feature in features:
-            FeatureState.objects.create(
-                feature=feature,
-                environment=self,
-                identity=None,
-                enabled=False
-                if self.project.prevent_flag_defaults
-                else feature.default_enabled,
-            )
+        FeatureState.create_initial_feature_states_for_environment(environment=self)
 
     @hook(AFTER_UPDATE)
     def clear_environment_cache(self):
         # TODO: this could rebuild the cache itself (using an async task)
         environment_cache.delete(self.initial_value("api_key"))
+
+    @hook(BEFORE_UPDATE, when="use_v2_feature_versioning", was=True, is_now=False)
+    def validate_use_v2_feature_versioning(self):
+        raise FeatureVersioningError("Cannot revert from v2 feature versioning.")
+
+    @hook(AFTER_DELETE)
+    def delete_from_dynamo(self):
+        if self.project.enable_dynamo_db and environment_wrapper.is_enabled:
+            from environments.tasks import delete_environment_from_dynamo
+
+            delete_environment_from_dynamo.delay(args=(self.api_key, self.id))
 
     def __str__(self):
         return "Project %s - Environment %s" % (self.project.name, self.name)
@@ -161,10 +178,8 @@ class Environment(
         clone.name = name
         clone.api_key = api_key if api_key else create_hash()
         clone.save()
-        for feature_segment in self.feature_segments.all():
-            feature_segment.clone(clone)
 
-        # Since identities are closely tied to the enviroment
+        # Since identities are closely tied to the environment
         # it does not make much sense to clone them, hence
         # only clone feature states without identities
         for feature_state in self.feature_states.filter(identity=None):
@@ -190,6 +205,9 @@ class Environment(
                 logger.warning("Requested environment with null api_key.")
                 return None
 
+            if cls.is_bad_key(api_key):
+                return None
+
             environment = environment_cache.get(api_key)
             if not environment:
                 select_related_args = (
@@ -201,18 +219,19 @@ class Environment(
                     "heap_config",
                     "dynatrace_config",
                 )
-                environment = (
-                    cls.objects.select_related(*select_related_args)
-                    .filter(Q(api_key=api_key) | Q(api_keys__key=api_key))
-                    .distinct()
-                    .defer("description")
-                    .get()
+                base_qs = cls.objects.select_related(*select_related_args).defer(
+                    "description"
                 )
+                qs_for_embedded_api_key = base_qs.filter(api_key=api_key)
+                qs_for_fk_api_key = base_qs.filter(api_keys__key=api_key)
+
+                environment = qs_for_embedded_api_key.union(qs_for_fk_api_key).get()
                 environment_cache.set(
                     api_key, environment, timeout=settings.ENVIRONMENT_CACHE_SECONDS
                 )
             return environment
         except cls.DoesNotExist:
+            cls.set_bad_key(api_key)
             logger.info("Environment with api_key %s does not exist" % api_key)
 
     @classmethod
@@ -232,7 +251,7 @@ class Environment(
         # grab the first project and verify that each environment is for the same
         # project (which should always be the case). Since we're working with fairly
         # small querysets here, this shouldn't have a noticeable impact on performance.
-        project = getattr(environments[0], "project", None)
+        project: Project | None = getattr(environments[0], "project", None)
         for environment in environments[1:]:
             if not environment.project == project:
                 raise RuntimeError("Environments must all belong to the same project.")
@@ -241,6 +260,13 @@ class Environment(
             return
 
         environment_wrapper.write_environments(environments)
+
+        if (
+            project.identity_overrides_v2_migration_status
+            == IdentityOverridesV2MigrationStatus.COMPLETE
+            and environment_v2_wrapper.is_enabled
+        ):
+            environment_v2_wrapper.write_environments(environments)
 
     def get_feature_state(
         self, feature_id: int, filter_kwargs: dict = None
@@ -260,6 +286,24 @@ class Environment(
                 self.feature_states.filter(**filter_kwargs),
             )
         )
+
+    @staticmethod
+    def is_bad_key(environment_key: str) -> bool:
+        return (
+            settings.CACHE_BAD_ENVIRONMENTS_SECONDS > 0
+            and bad_environments_cache.get(environment_key, 0)
+            >= settings.CACHE_BAD_ENVIRONMENTS_AFTER_FAILURES
+        )
+
+    @staticmethod
+    def set_bad_key(environment_key: str) -> None:
+        if settings.CACHE_BAD_ENVIRONMENTS_SECONDS:
+            current_count = bad_environments_cache.get(environment_key, 0)
+            bad_environments_cache.set(
+                environment_key,
+                current_count + 1,
+                timeout=settings.CACHE_BAD_ENVIRONMENTS_SECONDS,
+            )
 
     def trait_persistence_allowed(self, request: Request) -> bool:
         return (
@@ -419,10 +463,17 @@ class EnvironmentAPIKey(LifecycleModel):
     def is_valid(self) -> bool:
         return self.active and (not self.expires_at or self.expires_at > timezone.now())
 
-    @hook(AFTER_SAVE)
+    @hook(AFTER_SAVE, when="_should_update_dynamo", is_now=True)
     def send_to_dynamo(self):
-        if (
+        environment_api_key_wrapper.write_api_key(self)
+
+    @hook(AFTER_DELETE, when="_should_update_dynamo", is_now=True)
+    def delete_from_dynamo(self):
+        environment_api_key_wrapper.delete_api_key(self.key)
+
+    @property
+    def _should_update_dynamo(self) -> bool:
+        return (
             self.environment.project.enable_dynamo_db
             and environment_api_key_wrapper.is_enabled
-        ):
-            environment_api_key_wrapper.write_api_key(self)
+        )

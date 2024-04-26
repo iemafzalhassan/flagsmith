@@ -6,6 +6,17 @@
     clear: both;
     height: 0;
 }
+.hover-color-primary {
+    &:hover {
+        color: $primary;
+        >*{
+          color: $primary;
+        }
+        path {
+            fill: $primary;
+        }
+    }
+}
 .bg-secondary {
     background-color: $bt-brand-secondary;
 }
@@ -96,10 +107,6 @@
     margin-right: auto!important;
 }
 
-.signup-form {
-    width: 485px;
-}
-
 .signup-icon {
     width: 64px;
     path {
@@ -128,26 +135,30 @@
 
 .unread {
     display: inline-block;
-    border-radius: 20px;
-    background: $bt-brand-primary;
+    border-radius: 7px;
+    background: #7b51fb;
     font-weight: bold;
-    padding-left: 5px;
-    padding-right: 5px;
-    height: 16px;
-    min-width: 16px;
+    padding-left: 3px;
+    padding-right: 3px;
+    height: 14px;
+    min-width: 14px;
     color: #fff;
     text-align: center;
-    line-height: 17px;
-    font-size: 11px;
+    line-height: 14px;
+    font-size: 10px;
     cursor: pointer;
     position: relative;
-    bottom: 1px;
+    bottom: -1px;
 }
 .aside__environment-list-item.active {
     .unread {
         background-color: rgba(0,0,0,.2);
     }
 }
+.aside__environment-list-item.disabled {
+    color:#696969;
+    pointer-events: none;
+  }
 
 .justify-content-end {
     justify-content: flex-end;
@@ -161,11 +172,15 @@
     background: $bt-brand-primary !important;
 }
 .dark {
-
+    .text-body {
+        color: white !important;
+        >path{
+            fill: white !important;
+        }
+    }
     .bg-primary {
         background: $bt-brand-primary-dark !important;
     }
-
 }
 
 .link-unstyled {
@@ -173,5 +188,26 @@
     &:hover {
         text-decoration: none;
         color: $bt-brand-primary-dark
+    }
+}
+
+.mh-auto {
+    min-height: auto !important;
+}
+
+.text-overflow {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.overflow-ellipsis {
+    width: 100%;
+    >* {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
     }
 }

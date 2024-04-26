@@ -15,7 +15,7 @@ class Resource(models.IntegerChoices):
     def get_lowercased_name(cls, resource: int) -> str:
         member = next(filter(lambda member: member.value == resource, cls), None)
         if not member:
-            raise ValueError("Invalid resource: {resource}")
+            raise ValueError(f"Invalid resource: {resource}")
 
         return member.name.lower()
 
@@ -24,7 +24,7 @@ class Resource(models.IntegerChoices):
         try:
             return getattr(cls, resource.upper().replace("-", "_")).value
         except (KeyError, AttributeError) as err:
-            raise ValueError("Invalid resource: {resource}") from err
+            raise ValueError(f"Invalid resource: {resource}") from err
 
 
 class APIUsageRaw(models.Model):
@@ -57,8 +57,9 @@ class AbstractBucket(LifecycleModelMixin, models.Model):
 
         if overlapping_buckets.exists():
             raise ValidationError(
-                "Cannot create bucket starting at {self.created_at} with size {self.bucket_size} minutes,"
+                "Cannot create bucket starting at %s with size %s minutes,"
                 "because it overlaps with existing buckets"
+                % (self.created_at, self.bucket_size),
             )
 
 
@@ -72,10 +73,14 @@ class APIUsageBucket(AbstractBucket):
 
 
 class FeatureEvaluationRaw(models.Model):
-    feature_name = models.CharField(max_length=2000)
+    feature_name = models.CharField(db_index=True, max_length=2000)
     environment_id = models.PositiveIntegerField()
     evaluation_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    # Both stored for tracking multivariate split testing.
+    identity_identifier = models.CharField(max_length=2000, null=True, default=None)
+    enabled_when_evaluated = models.BooleanField(null=True, default=None)
 
 
 class FeatureEvaluationBucket(AbstractBucket):

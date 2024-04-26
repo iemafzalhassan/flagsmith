@@ -6,6 +6,9 @@ import MyGroupsSelect from 'components/MyGroupsSelect'
 import { getMyGroups } from 'common/services/useMyGroup'
 import { getStore } from 'common/store'
 import DateSelect from 'components/DateSelect'
+import { close } from 'ionicons/icons'
+import { IonIcon } from '@ionic/react'
+import InfoMessage from 'components/InfoMessage'
 
 const ChangeRequestModal = class extends Component {
   static displayName = 'ChangeRequestModal'
@@ -21,8 +24,9 @@ const ChangeRequestModal = class extends Component {
       (this.props.changeRequest && this.props.changeRequest.description) || '',
     groups: [],
     live_from:
-      this.props.changeRequest &&
-      this.props.changeRequest.feature_states[0].live_from,
+      (this.props.changeRequest &&
+        this.props.changeRequest.feature_states[0].live_from) ||
+      undefined,
     title: (this.props.changeRequest && this.props.changeRequest.title) || '',
   }
 
@@ -114,32 +118,24 @@ const ChangeRequestModal = class extends Component {
               </FormGroup>
               <div>
                 <InputGroup
-                  tooltip='Allows you to set a date and time in which your change will only become active '
+                  tooltip='Allows you to set a date and time in which your change will only become active. All dates are displayed in your local timezone.'
                   title='Schedule Change'
                   component={
                     <Row>
                       <DateSelect
+                        dateFormat='MMMM d, yyyy h:mm aa'
                         onChange={(e) => {
                           this.setState({
                             live_from: e.toISOString(),
                           })
                         }}
                         selected={moment(this.state.live_from)._d}
-                        value={
-                          this.state.live_from
-                            ? `${moment(this.state.live_from).format(
-                                'Do MMM YYYY hh:mma',
-                              )} (${
-                                Intl.DateTimeFormat().resolvedOptions().timeZone
-                              })`
-                            : 'Immediately'
-                        }
                       />
 
                       <Button
                         className='ml-2'
                         onClick={() => {
-                          this.setState({ live_from: null })
+                          this.setState({ live_from: undefined })
                         }}
                         theme='secondary'
                         size='large'
@@ -150,12 +146,18 @@ const ChangeRequestModal = class extends Component {
                   }
                 />
               </div>
+              {moment(this.state.live_from).isAfter(moment()) && (
+                <InfoMessage>
+                  This change will be scheduled to go live at{' '}
+                  <strong>
+                    {moment(this.state.live_from).format('Do MMM YYYY hh:mma')}{' '}
+                    ({Intl.DateTimeFormat().resolvedOptions().timeZone} Time).
+                  </strong>
+                </InfoMessage>
+              )}
               {!this.props.changeRequest &&
                 this.props.showAssignees &&
-                (!Utils.getFlagsmithHasFeature('disable_users_as_reviewers') ||
-                  Utils.getFlagsmithHasFeature(
-                    'enable_groups_as_reviewers',
-                  )) && (
+                !Utils.getFlagsmithHasFeature('disable_users_as_reviewers') && (
                   <FormGroup className='mb-4'>
                     <InputGroup
                       component={
@@ -175,7 +177,9 @@ const ChangeRequestModal = class extends Component {
                                   <span className='font-weight-bold'>
                                     {u.first_name} {u.last_name}
                                   </span>
-                                  <span className='chip-icon ion ion-ios-close' />
+                                  <span className='chip-icon ion'>
+                                    <IonIcon icon={close} />
+                                  </span>
                                 </Row>
                               ))}
                               <Button
@@ -188,34 +192,32 @@ const ChangeRequestModal = class extends Component {
                               </Button>
                             </Row>
                           )}
-                          {Utils.getFlagsmithHasFeature(
-                            'enable_groups_as_reviewers',
-                          ) && (
-                            <Row>
-                              <strong style={{ width: 70 }}> Groups: </strong>
-                              {ownerGroups.map((u) => (
-                                <Row
-                                  key={u.id}
-                                  onClick={() => this.removeOwner(u.id, false)}
-                                  className='chip'
-                                  style={{ marginBottom: 4, marginTop: 4 }}
-                                >
-                                  <span className='font-weight-bold'>
-                                    {u.name}
-                                  </span>
-                                  <span className='chip-icon ion ion-ios-close' />
-                                </Row>
-                              ))}
-                              <Button
-                                theme='text'
-                                onClick={() =>
-                                  this.setState({ showGroups: true })
-                                }
+                          <Row>
+                            <strong style={{ width: 70 }}> Groups: </strong>
+                            {ownerGroups.map((u) => (
+                              <Row
+                                key={u.id}
+                                onClick={() => this.removeOwner(u.id, false)}
+                                className='chip'
+                                style={{ marginBottom: 4, marginTop: 4 }}
                               >
-                                Add group
-                              </Button>
-                            </Row>
-                          )}
+                                <span className='font-weight-bold'>
+                                  {u.name}
+                                </span>
+                                <span className='chip-icon ion'>
+                                  <IonIcon icon={close} />
+                                </span>
+                              </Row>
+                            ))}
+                            <Button
+                              theme='text'
+                              onClick={() =>
+                                this.setState({ showGroups: true })
+                              }
+                            >
+                              Add group
+                            </Button>
+                          </Row>
                         </div>
                       }
                       onChange={(e) =>
@@ -251,19 +253,18 @@ const ChangeRequestModal = class extends Component {
                     }
                   />
                 )}
-              {!this.props.changeRequest &&
-                Utils.getFlagsmithHasFeature('enable_groups_as_reviewers') && (
-                  <MyGroupsSelect
-                    orgId={AccountStore.getOrganisation().id}
-                    value={this.state.approvals.map((v) => v.group)}
-                    onAdd={this.addOwner}
-                    onRemove={this.removeOwner}
-                    isOpen={this.state.showGroups}
-                    onToggle={() =>
-                      this.setState({ showGroups: !this.state.showGroups })
-                    }
-                  />
-                )}
+              {!this.props.changeRequest && (
+                <MyGroupsSelect
+                  orgId={AccountStore.getOrganisation().id}
+                  value={this.state.approvals.map((v) => v.group)}
+                  onAdd={this.addOwner}
+                  onRemove={this.removeOwner}
+                  isOpen={this.state.showGroups}
+                  onToggle={() =>
+                    this.setState({ showGroups: !this.state.showGroups })
+                  }
+                />
+              )}
 
               <FormGroup className='text-right mt-2'>
                 <Button

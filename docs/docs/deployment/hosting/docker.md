@@ -5,13 +5,11 @@ sidebar_position: 40
 
 # Docker
 
-You can use docker to set up an entire [Flagsmith Feature Flag](https://www.flagsmith.com) environment locally. Just
-clone the [docker repository](https://github.com/Flagsmith/self-hosted) and run docker-compose:
+You can use docker to set up an entire [Flagsmith Feature Flag](https://www.flagsmith.com) environment locally:
 
 ```bash
-git clone https://github.com/Flagsmith/self-hosted.git
-cd self-hosted
-docker-compose up
+curl -o docker-compose.yml https://raw.githubusercontent.com/Flagsmith/flagsmith/main/docker-compose.yml
+docker-compose -f docker-compose.yml up
 ```
 
 Wait for the images to download and run, then visit `http://localhost:8000/`. As a first step, you will need to create a
@@ -22,13 +20,17 @@ new account at [http://localhost:8000/signup](http://localhost:8000/signup)
 As well as the Environment Variables specified in the [API](/deployment/hosting/locally-api#environment-variables) and
 [Front End](/deployment/hosting/locally-frontend#environment-variables) you can also specify the following:
 
+- `GUNICORN_CMD_ARGS`: Gunicorn command line arguments. Overrides Flagsmith's defaults. See
+  [Gunicorn documentation](https://docs.gunicorn.org/en/stable/settings.html) for reference.
 - `GUNICORN_WORKERS`: The number of [Gunicorn Workers](https://docs.gunicorn.org/en/stable/settings.html#workers) that
   are created
 - `GUNICORN_THREADS`: The number of
   [Gunicorn Threads per Worker](https://docs.gunicorn.org/en/stable/settings.html#threads)
 - `GUNICORN_TIMEOUT`: The number of seconds before the
   [Gunicorn times out](https://docs.gunicorn.org/en/stable/settings.html#timeout)
-- `ACCESS_LOG_LOCATION`: The location to write access logs to
+- `ACCESS_LOG_FORMAT`: Message format for Gunicorn's access log. See
+  [variable details](https://docs.gunicorn.org/en/stable/settings.html#access-log-format) to define your own format.
+- `ACCESS_LOG_LOCATION`: The location to write access logs to. If set to `-`, the logs will be sent to `stdout`
 
 ## Platform Architectures
 

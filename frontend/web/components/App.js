@@ -1,19 +1,14 @@
-import React, { Component } from 'react'
+import React, { Component, Fragment } from 'react'
 import { matchPath } from 'react-router'
 import { withRouter } from 'react-router-dom'
 import amplitude from 'amplitude-js'
 import NavLink from 'react-router-dom/NavLink'
 import Aside from './Aside'
-import Popover from './base/Popover'
-import PaymentModal from './modals/Payment'
 import TwoFactorPrompt from './SimpleTwoFactor/prompt'
 import Maintenance from './Maintenance'
 import Blocked from './Blocked'
 import AppLoader from './AppLoader'
 import ButterBar from './ButterBar'
-import UserSettingsIcon from './svg/UserSettingsIcon'
-import DocumentationIcon from './svg/DocumentationIcon'
-import UpgradeIcon from './svg/UpgradeIcon'
 import AccountSettingsPage from './pages/AccountSettingsPage'
 import Headway from './Headway'
 import ProjectStore from 'common/stores/project-store'
@@ -21,10 +16,16 @@ import getBuildVersion from 'project/getBuildVersion'
 import { Provider } from 'react-redux'
 import { getStore } from 'common/store'
 import { resolveAuthFlow } from '@datadog/ui-extensions-sdk'
-import Format from 'common/utils/format'
 import ConfigProvider from 'common/providers/ConfigProvider'
-import Permission from 'common/providers/Permission'
 import { getOrganisationUsage } from 'common/services/useOrganisationUsage'
+import Button from './base/forms/Button'
+import Icon from './Icon'
+import AccountStore from 'common/stores/account-store'
+import InfoMessage from './InfoMessage'
+import OrganisationLimit from './OrganisationLimit'
+import GithubStar from './GithubStar'
+import Tooltip from './Tooltip'
+
 const App = class extends Component {
   static propTypes = {
     children: propTypes.element.isRequired,
@@ -35,9 +36,12 @@ const App = class extends Component {
   }
 
   state = {
+    activeOrganisation: 0,
     asideIsVisible: !isMobile,
+    lastEnvironmentId: '',
+    lastProjectId: '',
     pin: '',
-    totalApiCalls: 0,
+    showAnnouncement: true,
   }
 
   constructor(props, context) {
@@ -48,7 +52,33 @@ const App = class extends Component {
   componentDidMount = () => {
     getBuildVersion()
     this.listenTo(ProjectStore, 'change', () => this.forceUpdate())
+    this.listenTo(AccountStore, 'change', this.getOrganisationUsage)
+    this.getOrganisationUsage()
     window.addEventListener('scroll', this.handleScroll)
+    AsyncStorage.getItem('lastEnv').then((res) => {
+      if (res) {
+        const lastEnv = JSON.parse(res)
+        this.setState({
+          lastEnvironmentId: lastEnv.environmentId,
+          lastProjectId: lastEnv.projectId,
+        })
+      }
+    })
+  }
+
+  getOrganisationUsage = () => {
+    if (
+      AccountStore.getOrganisation()?.id &&
+      this.state.activeOrganisation !== AccountStore.getOrganisation().id
+    ) {
+      getOrganisationUsage(getStore(), {
+        organisationId: AccountStore.getOrganisation()?.id,
+      }).then((res) => {
+        this.setState({
+          activeOrganisation: AccountStore.getOrganisation().id,
+        })
+      })
+    }
   }
 
   toggleDarkMode = () => {
@@ -67,6 +97,15 @@ const App = class extends Component {
         this.setState({ asideIsVisible: false })
       }
       this.hideMobileNav()
+      AsyncStorage.getItem('lastEnv').then((res) => {
+        if (res) {
+          const { environmentId, projectId } = JSON.parse(res)
+          this.setState({
+            lastEnvironmentId: environmentId,
+            lastProjectId: projectId,
+          })
+        }
+      })
     }
   }
 
@@ -122,13 +161,22 @@ const App = class extends Component {
         this.context.router.history.replace(redirect)
       } else {
         AsyncStorage.getItem('lastEnv').then((res) => {
+          if (
+            this.props.location.search.includes('github-redirect') &&
+            Utils.getFlagsmithHasFeature('github_integration')
+          ) {
+            this.context.router.history.replace(
+              `/github-setup${this.props.location.search}`,
+            )
+            return
+          }
           if (res) {
             const lastEnv = JSON.parse(res)
             const lastOrg = _.find(AccountStore.getUser().organisations, {
               id: lastEnv.orgId,
             })
             if (!lastOrg) {
-              this.context.router.history.replace('/projects')
+              this.context.router.history.replace('/organisation-settings')
               return
             }
 
@@ -144,7 +192,7 @@ const App = class extends Component {
             return
           }
 
-          this.context.router.history.replace('/projects')
+          this.context.router.history.replace('/organisation-settings')
         })
       }
     }
@@ -173,6 +221,11 @@ const App = class extends Component {
     this.context.router.history.replace('/')
   }
 
+  closeAnnouncement = (announcementId) => {
+    this.setState({ showAnnouncement: false })
+    flagsmith.setTrait(`dismissed_announcement`, announcementId)
+  }
+
   render() {
     if (
       Utils.getFlagsmithHasFeature('dark_mode') &&
@@ -182,7 +235,7 @@ const App = class extends Component {
     }
     const { location } = this.props
     const pathname = location.pathname
-    const { asideIsVisible, totalApiCalls } = this.state
+    const { asideIsVisible, lastEnvironmentId, lastProjectId } = this.state
     const match = matchPath(pathname, {
       exact: false,
       path: '/project/:projectId/environment/:environmentId',
@@ -196,11 +249,14 @@ const App = class extends Component {
     const projectId =
       _.get(match, 'params.projectId') || _.get(match2, 'params.projectId')
     const environmentId = _.get(match, 'params.environmentId')
-    const pageHasAside = environmentId || projectId
+
+    const storageHasParams = lastEnvironmentId || lastProjectId
+    const pageHasAside = environmentId || projectId || storageHasParams
     const isHomepage =
       pathname === '/' ||
       pathname === '/login' ||
       pathname === '/signup' ||
+      pathname === '/github-setup' ||
       pathname.includes('/invite')
     if (Project.amplitude) {
       amplitude.getInstance().init(Project.amplitude)
@@ -230,24 +286,21 @@ const App = class extends Component {
       )
     }
     if (AccountStore.forced2Factor()) {
-      return <AccountSettingsPage />
+      return <AccountSettingsPage isLoginPage={true} />
     }
     const projectNotLoaded =
       !ProjectStore.model && document.location.href.includes('project/')
     if (document.location.href.includes('widget')) {
       return <div>{this.props.children}</div>
     }
-    if (
-      AccountStore.getOrganisation() &&
-      AccountStore.getOrganisation().id &&
-      this.state.totalApiCalls == 0
-    ) {
-      getOrganisationUsage(getStore(), {
-        organisationId: AccountStore.getOrganisation()?.id,
-      }).then((res) => {
-        this.setState({ totalApiCalls: res[0]?.data?.totals.total })
-      })
-    }
+    const announcementValue = Utils.getFlagsmithJSONValue('announcement', null)
+    const dismissed = flagsmith.getTrait('dismissed_announcement')
+    const showBanner =
+      announcementValue &&
+      (!dismissed || dismissed !== announcementValue.id) &&
+      Utils.getFlagsmithHasFeature('announcement') &&
+      this.state.showAnnouncement
+
     return (
       <Provider store={getStore()}>
         <AccountProvider
@@ -255,7 +308,7 @@ const App = class extends Component {
           onLogout={this.onLogout}
           onLogin={this.onLogin}
         >
-          {({ isSaving, organisation, user }, { twoFactorLogin }) =>
+          {({ isSaving, user }, { twoFactorLogin }) =>
             user && user.twoFactorPrompt ? (
               <div className='col-md-6 push-md-3 mt-5'>
                 <TwoFactorPrompt
@@ -277,7 +330,7 @@ const App = class extends Component {
               <div>
                 <div
                   className={
-                    pageHasAside
+                    !isHomepage
                       ? `aside-body${
                           isMobile && !asideIsVisible ? '-full-width' : ''
                         }`
@@ -286,290 +339,158 @@ const App = class extends Component {
                 >
                   {!isHomepage &&
                     (!pageHasAside || !asideIsVisible || !isMobile) && (
-                      <nav className='navbar px-4'>
-                        <Row space>
+                      <nav className='navbar py-0'>
+                        <Flex className='flex-row'>
                           <div className='navbar-left'>
                             <div className='navbar-nav'>
                               {pageHasAside && !asideIsVisible && (
                                 <div
                                   role='button'
-                                  className='clickable toggle'
+                                  className='clickable toggle mr-4'
                                   onClick={this.toggleAside}
                                 >
                                   <span className='icon ion-md-menu' />
                                 </div>
                               )}
-                              {!projectId && (
-                                <a
-                                  href={
-                                    user ? '/projects' : 'https://flagsmith.com'
-                                  }
-                                >
-                                  <img
-                                    title='Flagsmith'
-                                    height={24}
-                                    src='/static/images/nav-logo.svg'
-                                    className='brand'
-                                    alt='Flagsmith logo'
-                                  />
-                                </a>
-                              )}
                             </div>
                           </div>
-                          <Row className='navbar-right'>
-                            {user ? (
-                              <React.Fragment>
-                                <nav className='my-2 my-md-0 hidden-xs-down'>
-                                  {organisation &&
-                                    Utils.getFlagsmithHasFeature(
-                                      'payments_enabled',
-                                    ) && (
-                                      <a
-                                        href='#'
-                                        className='cursor-pointer nav-link p-2'
-                                        style={
-                                          Utils.calculaterRemainingCallsPercentage(
-                                            totalApiCalls,
-                                            organisation.subscription
-                                              ?.max_api_calls,
-                                          ) &&
-                                          Utils.getFlagsmithHasFeature(
-                                            'max_api_calls_alert',
-                                          )
-                                            ? {
-                                                border: '#7B51FB',
-                                                borderRadius: '8px',
-                                                borderStyle: 'solid',
-                                                fontSize: '15px',
-                                                width: '250px',
-                                              }
-                                            : {}
-                                        }
-                                        onClick={() => {
-                                          openModal(
-                                            'Payment plans',
-                                            <PaymentModal viewOnly={false} />,
-                                            'modal-lg',
-                                          )
-                                        }}
-                                      >
-                                        {Utils.calculaterRemainingCallsPercentage(
-                                          totalApiCalls,
-                                          organisation.subscription
-                                            ?.max_api_calls,
-                                        ) &&
-                                        Utils.getFlagsmithHasFeature(
-                                          'max_api_calls_alert',
-                                        ) ? (
-                                          <>
-                                            <span>
-                                              {`You used ${Format.shortenNumber(
-                                                totalApiCalls,
-                                              )}/${Format.shortenNumber(
-                                                organisation.subscription
-                                                  ?.max_api_calls,
-                                              )} requests. Click to`}{' '}
-                                              <span style={{ color: 'red' }}>
-                                                {'Upgrade'}
-                                              </span>
-                                              <UpgradeIcon />
-                                            </span>
-                                          </>
-                                        ) : (
-                                          <>
-                                            <UpgradeIcon />
-                                            <span>Upgrade</span>
-                                          </>
-                                        )}
-                                      </a>
-                                    )}
-                                  <Headway className='nav-link cursor-pointer' />
-                                  <a
-                                    href='https://docs.flagsmith.com'
-                                    target='_blank'
-                                    className='nav-link p-2'
-                                    rel='noreferrer'
+                          {user ? (
+                            <React.Fragment>
+                              <nav className='my-3 my-md-0 hidden-xs-down flex-row navbar-right space'>
+                                <Row>
+                                  <NavLink
+                                    id='org-settings-link'
+                                    activeClassName='active'
+                                    className='nav-link'
+                                    to='/organisation-settings'
                                   >
-                                    <DocumentationIcon />
-                                    Docs
-                                  </a>
+                                    <span className='mr-1'>
+                                      <Icon
+                                        name='layout'
+                                        width={20}
+                                        fill='#9DA4AE'
+                                      />
+                                    </span>
+                                    Organisation <strong>{AccountStore.getOrganisation()?.name}</strong>
+                                  </NavLink>
+                                </Row>
+                                <Row>
                                   <NavLink
                                     id='account-settings-link'
                                     data-test='account-settings-link'
                                     activeClassName='active'
-                                    className='nav-link'
+                                    className='nav-link mr-4'
                                     to={
                                       projectId
                                         ? `/project/${projectId}/environment/${environmentId}/account`
                                         : '/account'
                                     }
                                   >
-                                    <UserSettingsIcon />
+                                    <span className='mr-1'>
+                                      <Icon
+                                        name='person'
+                                        width={20}
+                                        fill='#9DA4AE'
+                                      />
+                                    </span>
                                     Account
                                   </NavLink>
-                                  {AccountStore.getOrganisationRole() ===
-                                  'ADMIN' ? (
-                                    <NavLink
-                                      id='org-settings-link'
-                                      activeClassName='active'
-                                      className='nav-link'
-                                      to='/organisation-settings'
-                                    >
-                                      <span
-                                        style={{ marginRight: 4 }}
-                                        className='icon--primary ion ion-md-settings'
-                                      />
-                                      {'Manage'}
-                                    </NavLink>
-                                  ) : (
-                                    !!AccountStore.getOrganisation() && (
-                                      <Permission
-                                        level='organisation'
-                                        permission='MANAGE_USER_GROUPS'
-                                        id={AccountStore.getOrganisation().id}
+                                  <GithubStar />
+                                  <Tooltip
+                                    place='bottom'
+                                    title={
+                                      <Button
+                                        href='https://docs.flagsmith.com'
+                                        target='_blank'
+                                        className='btn btn-with-icon mr-2'
+                                        size='small'
                                       >
-                                        {({ permission }) => (
-                                          <>
-                                            {(!!permission ||
-                                              Utils.getFlagsmithHasFeature(
-                                                'group_admins',
-                                              )) && (
-                                              <NavLink
-                                                id='org-settings-link'
-                                                activeClassName='active'
-                                                className='nav-link'
-                                                to='/organisation-groups'
-                                              >
-                                                <span
-                                                  style={{ marginRight: 4 }}
-                                                  className='icon--primary ion ion-md-settings'
-                                                />
-                                                {'Manage'}
-                                              </NavLink>
-                                            )}
-                                          </>
-                                        )}
-                                      </Permission>
-                                    )
-                                  )}
-                                </nav>
-                                <div
-                                  style={{ marginRight: 16, marginTop: 0 }}
-                                  className='dark-mode'
-                                >
-                                  <Switch
-                                    checked={Utils.getFlagsmithHasFeature(
-                                      'dark_mode',
-                                    )}
-                                    onChange={this.toggleDarkMode}
-                                    darkMode
-                                  />
-                                </div>
-                                <div className='org-nav'>
-                                  <Popover
-                                    className='popover-right'
-                                    contentClassName='popover-bt'
-                                    renderTitle={(toggle) => (
-                                      <a
-                                        className='nav-link'
-                                        id='org-menu'
-                                        onClick={toggle}
-                                      >
-                                        <div className='nav-link-featured relative flex-row'>
-                                          {organisation
-                                            ? organisation.name
-                                            : ''}
-                                          <span className='flex-column ion ion-ios-arrow-down' />
-                                        </div>
-                                      </a>
-                                    )}
+                                        <Icon
+                                          name='file-text'
+                                          width={20}
+                                          fill='#9DA4AE'
+                                        />
+                                      </Button>
+                                    }
                                   >
-                                    {(toggle) => (
-                                      <div className='popover-inner__content'>
-                                        <span className='popover-bt__title'>
-                                          Organisations
-                                        </span>
-                                        {organisation && (
-                                          <OrganisationSelect
-                                            projectId={projectId}
-                                            environmentId={environmentId}
-                                            clearableValue={false}
-                                            onChange={(organisation) => {
-                                              toggle()
-                                              AppActions.selectOrganisation(
-                                                organisation.id,
-                                              )
-                                              AppActions.getOrganisation(
-                                                organisation.id,
-                                              )
-                                              this.context.router.history.push(
-                                                '/projects',
-                                              )
-                                            }}
-                                          />
-                                        )}
-                                        {!Utils.getFlagsmithHasFeature(
-                                          'disable_create_org',
-                                        ) &&
-                                          (!Project.superUserCreateOnly ||
-                                            (Project.superUserCreateOnly &&
-                                              AccountStore.model
-                                                .is_superuser)) && (
-                                            <div className='pl-3 pr-3 mt-2 mb-2'>
-                                              <Link
-                                                id='create-org-link'
-                                                onClick={toggle}
-                                                to='/create'
-                                              >
-                                                <Flex className='text-center'>
-                                                  <Button>
-                                                    Create Organisation
-                                                  </Button>
-                                                </Flex>
-                                              </Link>
-                                            </div>
+                                    Docs
+                                  </Tooltip>
+
+                                  <Headway className='cursor-pointer mr-2' />
+                                  <Tooltip
+                                    place='bottom'
+                                    title={
+                                      <div className='dark-mode mt-0'>
+                                        <Switch
+                                          checked={Utils.getFlagsmithHasFeature(
+                                            'dark_mode',
                                           )}
-                                        <a
-                                          id='logout-link'
-                                          href='#'
-                                          onClick={AppActions.logout}
-                                          className='popover-bt__list-item'
-                                        >
-                                          <img
-                                            src='/static/images/icons/aside/logout-dark.svg'
-                                            className='mr-2'
-                                          />
-                                          Logout
-                                        </a>
+                                          onChange={this.toggleDarkMode}
+                                          darkMode
+                                        />
                                       </div>
-                                    )}
-                                  </Popover>
-                                </div>
-                              </React.Fragment>
-                            ) : (
-                              <div />
-                            )}
-                          </Row>
-                        </Row>
+                                    }
+                                  >
+                                    Dark Mode
+                                  </Tooltip>
+                                </Row>
+                              </nav>
+                            </React.Fragment>
+                          ) : (
+                            <div />
+                          )}
+                        </Flex>
                       </nav>
                     )}
-                  {pageHasAside && (
+                  {!isHomepage && (
                     <Aside
-                      projectId={projectId}
-                      environmentId={environmentId}
+                      projectId={projectId || lastProjectId}
+                      environmentId={environmentId || lastEnvironmentId}
                       toggleAside={this.toggleAside}
                       asideIsVisible={asideIsVisible}
+                      disabled={!pageHasAside}
                     />
                   )}
                   {isMobile && pageHasAside && asideIsVisible ? null : (
                     <div>
-                      <ButterBar />
+                      <ButterBar
+                        projectId={projectId}
+                        billingStatus={
+                          AccountStore.getOrganisation()?.subscription
+                            .billing_status
+                        }
+                      />
                       {projectNotLoaded ? (
                         <div className='text-center'>
                           <Loader />
                         </div>
                       ) : (
-                        this.props.children
+                        <Fragment>
+                          {user && (
+                            <OrganisationLimit
+                              id={AccountStore.getOrganisation()?.id}
+                            />
+                          )}
+                          {user && showBanner && (
+                            <Row className={'px-3'}>
+                              <InfoMessage
+                                title={announcementValue.title}
+                                infoMessageClass={'announcement'}
+                                isClosable={announcementValue.isClosable}
+                                close={() =>
+                                  this.closeAnnouncement(announcementValue.id)
+                                }
+                                buttonText={announcementValue.buttonText}
+                                url={announcementValue.url}
+                              >
+                                <div>
+                                  <div>{announcementValue.description}</div>
+                                </div>
+                              </InfoMessage>
+                            </Row>
+                          )}
+                          {this.props.children}
+                        </Fragment>
                       )}
                     </div>
                   )}

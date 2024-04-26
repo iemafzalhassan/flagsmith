@@ -11,61 +11,67 @@ import Tabs from '@theme/Tabs'; import TabItem from '@theme/TabItem';
 :::tip
 
 Server Side SDKs can run in 2 different modes: `Local Evaluation` and `Remote Evaluation`. We recommend
-[reading up about the differences](overview#remote-and-local-evaluation-modes) first before integrating the SDKS into
-your applications.
-
-Once you've got that understood, lets get the SDKs integrated!
+[reading up about the differences](/clients/overview#server-side-sdks) first before integrating the SDKS into your
+applications.
 
 :::
 
-## Github Links
+## SDK Overview
 
-All our SDKs are on Github.
+<Tabs groupId="language" queryString>
+<TabItem value="python" label="Python">
 
-<Tabs groupId="language">
-<TabItem value="py" label="Python">
-
-https://github.com/Flagsmith/flagsmith-python-client
+- Version Compatibility: **Python 3.8+**
+- Source Code: https://github.com/Flagsmith/flagsmith-python-client
 
 </TabItem>
 <TabItem value="java" label="Java">
 
-https://github.com/Flagsmith/flagsmith-java-client
+- Version Compatibility: **JDK 11+**
+- Source Code: https://github.com/Flagsmith/flagsmith-java-client
 
 </TabItem>
 <TabItem value="dotnet" label=".NET">
 
-https://github.com/Flagsmith/flagsmith-dotnet-client
+- Version Compatibility: **.NET core 6.0+**
+- Source Code: https://github.com/Flagsmith/flagsmith-dotnet-client
 
 </TabItem>
 <TabItem value="nodejs" label="NodeJS">
 
-https://github.com/Flagsmith/flagsmith-nodejs-client https://github.com/Flagsmith/flagsmith-nodejs-examples
+- Version Compatibility: **Node 14+**
+- Source Code:
+  - https://github.com/Flagsmith/flagsmith-nodejs-client
 
 </TabItem>
 <TabItem value="ruby" label="Ruby">
 
-https://github.com/Flagsmith/flagsmith-ruby-client
+- Version Compatibility: **Ruby 2.4+**
+- Source Code: https://github.com/Flagsmith/flagsmith-ruby-client
 
 </TabItem>
 <TabItem value="php" label="PHP">
 
-https://github.com/Flagsmith/flagsmith-php-client
+- Version Compatibility: **php 7.4+**
+- Source Code: https://github.com/Flagsmith/flagsmith-php-client
 
 </TabItem>
 <TabItem value="go" label="Go">
 
-https://github.com/Flagsmith/flagsmith-go-client
+- Version Compatibility: **Go 1.18+**
+- Source Code: https://github.com/Flagsmith/flagsmith-go-client
 
 </TabItem>
 <TabItem value="rust" label="Rust">
 
-https://github.com/Flagsmith/flagsmith-rust-client
+- Version Compatibility: **2021 edition (1.56.0)+**
+- Source Code: https://github.com/Flagsmith/flagsmith-rust-client
 
 </TabItem>
 <TabItem value="elixir" label="Elixir">
 
-https://github.com/Flagsmith/flagsmith-elixir-client
+- Version Compatibility: **Elixir 1.12+**
+- Source Code: https://github.com/Flagsmith/flagsmith-elixir-client
 
 </TabItem>
 </Tabs>
@@ -73,7 +79,7 @@ https://github.com/Flagsmith/flagsmith-elixir-client
 ## Add the Flagsmith package
 
 <Tabs groupId="language">
-<TabItem value="py" label="Python">
+<TabItem value="python" label="Python">
 
 ```bash
 pip install flagsmith
@@ -90,28 +96,30 @@ pip install flagsmith
 <dependency>
   <groupId>com.flagsmith</groupId>
   <artifactId>flagsmith-java-client</artifactId>
-  <version>5.0.0</version>
+  <version>7.2.0</version>
 </dependency>
 
 # Gradle
-implementation 'com.flagsmith:flagsmith-java-client:5.0.0'
+implementation 'com.flagsmith:flagsmith-java-client:7.2.0'
 ```
 
 </TabItem>
 <TabItem value="dotnet" label=".NET">
 
 ```bash
+# Check https://www.nuget.org/packages/Flagsmith for the latest version!
+
 # Package Manager
-Install-Package Flagsmith -Version 4.0.0
+Install-Package Flagsmith -Version 5.2.2
 
 #.NET CLI
-dotnet add package Flagsmith --version 4.0.0
+dotnet add package Flagsmith --version 5.2.2
 
 # PackageReference
-<PackageReference Include="Flagsmith" Version="4.0.0" />
+<PackageReference Include="Flagsmith" Version="5.2.2" />
 
 # Paket CLI
-paket add Flagsmith --version 4.0.0
+paket add Flagsmith --version 5.2.2
 ```
 
 </TabItem>
@@ -149,17 +157,20 @@ composer require flagsmith/flagsmith-php-client symfony/http-client nyholm/psr7 
 <TabItem value="go" label="Go">
 
 ```bash
-go get github.com/Flagsmith/flagsmith-go-client/v2
+# Check https://github.com/Flagsmith/flagsmith-go-client/releases for the latest version!
+
+go get github.com/Flagsmith/flagsmith-go-client/v3
 ```
 
 </TabItem>
 <TabItem value="rust" label="Rust">
 
 ```bash
+# Check https://crates.io/crates/flagsmith/versions for the latest version!
+
 # Cargo.toml
 [dependencies]
 flagsmith = "~1"
-
 ```
 
 </TabItem>
@@ -186,13 +197,13 @@ area and should be considered secret.
 :::
 
 <Tabs groupId="language">
-<TabItem value="py" label="Python">
+<TabItem value="python" label="Python">
 
 ```python
 from flagsmith import Flagsmith
 
 flagsmith = Flagsmith(
-    environment_key = "<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>"
+    environment_key = "FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY"
 )
 ```
 
@@ -202,7 +213,7 @@ flagsmith = Flagsmith(
 ```java
 private static FlagsmithClient flagsmith = FlagsmithClient
     .newBuilder()
-    .setApiKey(System.getenv("<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>"))
+    .setApiKey(System.getenv("FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY"))
     .build();
 ```
 
@@ -214,7 +225,7 @@ using Flagsmith;
 
 FlagsmithClient _flagsmithClient;
 
-_flagsmithClient = new("<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>");
+_flagsmithClient = new("FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY");
 ```
 
 </TabItem>
@@ -224,7 +235,7 @@ _flagsmithClient = new("<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>");
 const Flagsmith = require('flagsmith-nodejs');
 
 const flagsmith = new Flagsmith({
- environmentKey: '<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>',
+ environmentKey: 'FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY',
 });
 ```
 
@@ -235,7 +246,7 @@ const flagsmith = new Flagsmith({
 require "flagsmith"
 
 $flagsmith = Flagsmith::Client.new(
-  environment_key: '<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>'
+  environment_key: 'FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY'
 )
 ```
 
@@ -245,7 +256,7 @@ $flagsmith = Flagsmith::Client.new(
 ```php
 use Flagsmith\Flagsmith;
 
-$flagsmith = new Flagsmith('<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>');
+$flagsmith = new Flagsmith('FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY');
 ```
 
 </TabItem>
@@ -253,13 +264,11 @@ $flagsmith = new Flagsmith('<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>');
 
 ```go
 import (
-  flagsmith "github.com/Flagsmith/flagsmith-go-client"
+  "os"
+  flagsmith "github.com/Flagsmith/flagsmith-go-client/v3"
 )
-ctx, cancel := context.WithCancel(context.Background())
-defer cancel()
-
 // Initialise the Flagsmith client
-client := flagsmith.NewClient('<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>', flagsmith.WithContext(ctx),)
+client := flagsmith.NewClient(os.Getenv("FLAGSMITH_ENVIRONMENT_KEY"))
 ```
 
 </TabItem>
@@ -306,7 +315,7 @@ config :flagsmith_engine, :configuration,
 ## Get Flags for an Environment
 
 <Tabs groupId="language">
-<TabItem value="py" label="Python">
+<TabItem value="python" label="Python">
 
 ```python
 # The method below triggers a network request
@@ -373,7 +382,7 @@ $flags->getFeatureValue('secret_button');
 
 ```go
 // The method below triggers a network request
-flags, _ := client.GetEnvironmentFlags()
+flags, _ := client.GetEnvironmentFlags(ctx)
 showButton, _ := flags.IsFeatureEnabled("secret_button")
 buttonData, _ := flags.GetFeatureValue("secret_button")
 ```
@@ -406,14 +415,8 @@ secret_button_feature_value = Flagsmith.Client.get_feature_value(flags, "secret_
 
 ## Get Flags for an Identity
 
-- By default, all Traits defined in the SDK will automatically be persisted against the Identity within the Flagsmith
-  API.
-- Traits passed to the SDK will be added to all the other Traits associated with that Identity.
-- This full set of Traits are then used to evaluate the Flag values for the Identity.
-- This all happens in a single request/response.
-
 <Tabs groupId="language">
-<TabItem value="py" label="Python">
+<TabItem value="python" label="Python">
 
 ```python
 identifier = "delboy@trotterstraders.co.uk"
@@ -503,11 +506,10 @@ trait := flagsmith.Trait{TraitKey: "trait", TraitValue: "trait_value"}
 traits = []*flagsmith.Trait{&trait}
 
 // The method below triggers a network request
-flags, _ := client.GetIdentityFlags(identifier, traits)
+flags, _ := client.GetIdentityFlags(ctx, identifier, traits)
 
 showButton, _ := flags.IsFeatureEnabled("secret_button")
 buttonData, _ := flags.GetFeatureValue("secret_button")
-
 ```
 
 </TabItem>
@@ -532,7 +534,6 @@ let identity_flags = flagsmith.get_identity_flags(identifier, Some(traits)).unwr
 
 let show_button = identity_flags.is_feature_enabled("secret_button").unwrap();
 let button_data = identity_flags.get_feature_value_as_string("secret_button").unwrap();
-
 ```
 
 </TabItem>
@@ -553,13 +554,29 @@ secret_button_feature_value = Flagsmith.Client.get_feature_value(flags, "secret_
 </TabItem>
 </Tabs>
 
+### When running in [Remote Evaluation mode](/clients/overview#remote-evaluation)
+
+- When requesting Flags for an Identity, all the Traits defined in the SDK will automatically be persisted against the
+  Identity within the Flagsmith API.
+- Traits passed to the SDK will be added to all the other previously persisted Traits associated with that Identity.
+- This full set of Traits are then used to evaluate the Flag values for the Identity.
+- This all happens in a single request/response.
+
+### When running in [Local Evaluation mode](/clients/overview#local-evaluation)
+
+- _Only_ the Traits provided to the SDK at runtime will be used. Local Evaluation mode, by design, does not make any
+  network requests to the Flagsmith API when evaluating Flags for an Identity.
+  - When running in Local Evaluation Mode, the SDK requests the
+    [Environment Document](/clients/overview#the-environment-document) from the Flagsmith API. This contains all the
+    information required to make Flag Evaluations, but it does _not_ contain any Trait data.
+
 ## Managing Default Flags
 
 Default Flags are configured by passing in a function that is called when a Flag cannot be found or if the network
 request to the API fails when retrieving flags.
 
 <Tabs groupId="language">
-<TabItem value="py" label="Python">
+<TabItem value="python" label="Python">
 
 ```python
 from flagsmith import Flagsmith
@@ -580,7 +597,7 @@ def default_flag_handler(feature_name: str) -> DefaultFlag:
     return DefaultFlag(False, None)
 
 flagsmith = Flagsmith(
-    environment_key="<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>",
+    environment_key="FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY",
     default_flag_handler=default_flag_handler,
 )
 ```
@@ -592,7 +609,7 @@ flagsmith = Flagsmith(
 private static FlagsmithClient flagsmith = FlagsmithClient
     .newBuilder()
     .setDefaultFlagValueFunction(HelloController::defaultFlagHandler)
-    .setApiKey(System.getenv("<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>"))
+    .setApiKey(System.getenv("FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY"))
     .build();
 
 private static DefaultFlag defaultFlagHandler(String featureName) {
@@ -616,7 +633,7 @@ private static DefaultFlag defaultFlagHandler(String featureName) {
 using Flagsmith;
 
 FlagsmithClient _flagsmithClient;
-_flagsmithClient = new("<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>", defaultFlagHandler: defaultFlagHandler);
+_flagsmithClient = new("FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY", defaultFlagHandler: defaultFlagHandler);
 
 static Flag defaultFlagHandler(string featureName)
 {
@@ -659,7 +676,7 @@ $flagsmith = Flagsmith::Client.new(
 <TabItem value="php" label="PHP">
 
 ```php
-$flagsmith = (new Flagsmith('<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>'))
+$flagsmith = (new Flagsmith('FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY'))
     ->withDefaultFlagHandler(function ($featureName) {
         $defaultFlag = (new DefaultFlag())
             ->withEnabled(false)->withValue(null);
@@ -675,12 +692,17 @@ $flagsmith = (new Flagsmith('<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>'))
 <TabItem value="go" label="Go">
 
 ```go
-func defaultFlagHandler(featureName string) flagsmith.Flag {
-	return flagsmith.Flag{IsDefault: true, FeatureName: featureName, Value: `{"colour": "#ababab"}`}
+func DefaultFlagHandler(featureName string) (flagsmith.Flag, error) {
+	return flagsmith.Flag{
+		FeatureName: featureName,
+		IsDefault:   true,
+		Value:       `{"colour": "#FFFF00"}`,
+		Enabled:     true,
+	}, nil
 }
 
-client := flagsmith.NewClient(os.Getenv("FLAGSMITH_API_KEY"),
-		flagsmith.WithDefaultHandler(defaultFlagHandler),
+client := flagsmith.NewClient(os.Getenv("FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY"),
+		flagsmith.WithDefaultHandler(DefaultFlagHandler),
 )
 
 ```
@@ -727,10 +749,136 @@ flag_handler =
         end
     end
 
-client_configuration = Flagsmith.Client.new(environment_key: "MY_SDK_KEY", default_flag_handler: flag_handler)
+client_configuration = Flagsmith.Client.new(environment_key: "FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY", default_flag_handler: flag_handler)
 ```
 
 </TabItem>
+</Tabs>
+
+### Using an Offline Handler
+
+:::info
+
+Offline handlers are still in active development. We are building them for all our SDKs; those that are production ready
+are listed below.
+
+Progress on the remaining SDKs can be seen [here](https://github.com/Flagsmith/flagsmith/issues/2024).
+
+:::
+
+Flagsmith SDKs can be configured to include an offline handler which has 2 functions:
+
+1. It can be used alongside [Offline Mode](server-side.md#offline-mode) to evaluate flags in environments with no
+   network access
+2. It can be used as a means of defining the behaviour for evaluating default flags, when something goes wrong with the
+   regular evaluation process. To do this, simply set the offline handler initialisation parameter without enabling
+   offline mode.
+
+To use it as a default handler, we recommend using the [flagsmith CLI](https://github.com/Flagsmith/flagsmith-cli) to
+generate the [Environment Document](/clients/overview#the-environment-document) and use our LocalFileHandler class, but
+you can also create your own offline handlers, by extending the base class.
+
+<Tabs groupId="language">
+<TabItem value="python" label="Python">
+
+```python
+# Using the built-in local file handler
+
+local_file_handler = LocalFileHandler(environment_document_path="/app/environment.json")
+flagsmith = Flagsmith(..., offline_handler=local_file_handler)
+
+# Defining a custom offline handler
+
+class MyCustomOfflineHandler(BaseOfflineHandler):
+    def get_environment(self) -> EnvironmentModel:
+        return some_function_to_get_the_environment()
+```
+
+</TabItem>
+
+<TabItem value="java" label="Java">
+
+```java
+// Using the built-in local file handler
+
+FlagsmithConfig flagsmithConfig = FlagsmithConfig.newBuilder()
+    .withOfflineHandler(new LocalFileHandler("/app/environment.json"))
+    ...
+    .build()
+
+// Defining a custom offline handler
+
+public class MyCustomOfflineHandler implements IOfflineHandler:
+    public EnvironmentModel getEnvironment() {
+        return someMethodToGetTheEnvironment()
+    }
+```
+
+</TabItem>
+<TabItem value="dotnet" label=".NET">
+
+```csharp
+// Using the built-in local file handler
+var localFileHandler = new LocalFileHandler("path_to_environment_file/environment_file.json");
+
+var flagsmithClient = new FlagsmithClient(
+    offlineMode: true,
+    offlineHandler: localFileHandler
+);
+
+// Defining a custom offline handler
+public class MyCustomOfflineHandler: BaseOfflineHandler
+{
+    public override EnvironmentModel GetEnvironment()
+    {
+        return someMethodToGetTheEnvironment();
+    }
+}
+```
+
+</TabItem>
+<TabItem value="nodejs" label="NodeJS">
+
+```javascript
+// Using the built-in local file handler
+const localFileHandler = new LocalFileHandler('path_to_environment_file/environment_file.json');
+const flagsmith = new Flagsmith({ offlineMode: true, offlineHandler: localFileHandler });
+
+// Defining a custom offline handler
+class CustomOfflineHandler extends BaseOfflineHandler {
+ getEnvironment(): EnvironmentModel {
+  return someMethodToGetTheEnvironment();
+ }
+}
+```
+
+</TabItem>
+<TabItem value="ruby" label="Ruby">
+
+```ruby
+# Using the built-in local file handler
+
+offline_handler = \
+Flagsmith::OfflineHandlers::LocalFileHandler.new("environment.json")
+
+# Instantiate the client with offline mode set to true
+
+flagsmith = Flagsmith::Client.new(
+  offline_mode: true,
+  offline_handler: offline_handler,
+)
+
+# Defining a custom offline handler
+
+class MyCustomOfflineHandler
+  def environment
+    # Some code providing the environment for the handler
+  end
+end
+```
+
+</TabItem>
+
 </Tabs>
 
 ## Network Behaviour
@@ -755,7 +903,7 @@ To use Local Evaluation mode, you must use a Server Side key.
 
 :::
 
-- When the SDK is initialised, it will make an asnchronous network request to retrieve details about the Environment.
+- When the SDK is initialised, it will make an asynchronous network request to retrieve details about the Environment.
 - Every 60 seconds (by default), it will repeat this aysnchronous request to ensure that the Environment information it
   has is up to date.
 
@@ -780,14 +928,36 @@ flagsmith.close();
 ```
 
 </TabItem>
+<TabItem value="php" label="PHP">
+
+Since PHP does not share state between requests, you **have** to implement caching to get the benefits of Local
+Evaluation mode. Please see [caching](#caching) below.
+
+</TabItem>
 </Tabs>
+
+### Offline Mode
+
+:::info
+
+Offline mode is still in active development for some SDKs. We are building it for all our SDKs; those that are
+production ready are listed below.
+
+Progress on the remaining SDKs can be seen [here](https://github.com/Flagsmith/flagsmith/issues/2024).
+
+:::
+
+To run the SDK in a fully offline mode, you can set the client to offline mode. This will prevent the SDK from making
+any calls to the Flagsmith API. To use offline mode, you must also provide an
+[offline handler](server-side.md#using-an-offline-handler). See
+[Configuring the SDK](server-side.md#configuring-the-sdk) for more details on initialising the SDK in offline mode.
 
 ## Configuring the SDK
 
 You can modify the behaviour of the SDK during initialisation. Full configuration options are shown below.
 
 <Tabs groupId="language">
-<TabItem value="py" label="Python">
+<TabItem value="python" label="Python">
 
 ```python
 flagsmith = Flagsmith(
@@ -795,7 +965,7 @@ flagsmith = Flagsmith(
     # Note that this is either the `Environment API` key or the `Server Side SDK Token`
     # depending on if you are using Local or Remote Evaluation
     # Required.
-    environment_key = "<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>",
+    environment_key = "FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY",
 
     # Controls which mode to run in; local or remote evaluation.
     # See the `SDKs Overview Page` for more info
@@ -841,12 +1011,23 @@ flagsmith = Flagsmith(
     # the request to flagsmith fails or the flag requested is not included in the
     # response
     # Optional
-    default_flag_handler = lambda feature_name: return DefaultFlag(enabled=False, value=None)
+    default_flag_handler = lambda feature_name: return DefaultFlag(enabled=False, value=None),
 
     # (Available in 3.2.0+) Pass a mapping of protocol to proxy URL as per
     # https://requests.readthedocs.io/en/latest/api/#requests.Session.proxies
     # Optional
-    proxies: typing.Dict[str, str] = None
+    proxies: typing.Dict[str, str] = None,
+
+    # (Available in 3.4.0+) Set the SDK into offline mode.
+    # Optional
+    # Defaults to False
+    offline_mode: bool = False,
+
+    # (Available in 3.4.0+) Provide an offline handler to use with offline mode, or
+    # as a means of returning default flags.
+    # Optional
+    # Defaults to None
+    offline_handler: BaseOfflineHander = None,
 )
 ```
 
@@ -863,7 +1044,7 @@ private static FlagsmithClient flagsmith = FlagsmithClient
     // Note that this is either the `Environment API` key or the `Server Side SDK Token`
     // depending on if you are using Local or Remote Evaluation
     // Required.
-    .setApiKey(System.getenv("FLAGSMITH_API_KEY"))
+    .setApiKey(System.getenv("FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY"))
 
     // You can specify default Flag values on initialisation.
     // Optional
@@ -943,6 +1124,15 @@ private static FlagsmithClient flagsmith = FlagsmithClient
         // Defaults to False
         .withEnableAnalytics(Boolean enable)
 
+        // (Available in v7.2.0+) Set the SDK into offline mode.
+        // Optional
+        // Defaults to False
+        .withOfflineMode(Boolean enable)
+
+        // (Available in v7.2.0+) Provide an offline handler to use with offline mode, or as a means of returning default flags.
+        // Optional
+        .withOfflineHandler(IOfflineHandler offlineHandler)
+
         .build())
 
     .build();
@@ -1002,6 +1192,70 @@ _flagsmithClient = new FlagsmithClient(
     # Defaults to null (http client default)
     requestTimeout: null,
 )
+```
+
+### Singleton Initialization
+
+Singleton ensures a single instance of FlagsmithClient throughout the application, optimizing resources and maintaining
+consistency in configuration.
+
+Below you can find an example implementation of the client instantiated as a Singleton with its configuration defined in
+a file called `FlagsmithSettings.cs` (found below), which stores Flagsmith-specific settings.
+
+```csharp
+
+builder.Services.AddOptions<FlagsmithSettings>().Bind(builder.Configuration.GetSection(FlagsmithSettings.ConfigSection));
+builder.Services.AddSingleton(provider => provider.GetRequiredService<IOptions<FlagsmithSettings>>().Value);
+builder.Services.AddSingleton<IFlagsmithClient, FlagsmithClient>(provider =>
+{
+    var settings = provider.GetService<FlagsmithSettings>();
+    return new FlagsmithClient(settings);
+});
+
+
+```
+
+`FlagsmithSettings.cs`
+
+```csharp
+using Example.Controllers;
+using Flagsmith;
+using Newtonsoft.Json;
+
+namespace Example.Settings
+{
+    public class FlagsmithSettings : IFlagsmithConfiguration
+    {
+        public static string ConfigSection => "FlagsmithConfiguration";
+        public string ApiUrl { get; set; } = "https://edge.api.flagsmith.com/api/v1/";
+        public string EnvironmentKey { get; set; } = String.Empty;
+        public bool EnableClientSideEvaluation { get; set; } = false;
+        public int EnvironmentRefreshIntervalSeconds { get; set; } = 60;
+        public ILogger Logger { get; set; }
+        public bool EnableAnalytics { get; set; } = false;
+        public Double? RequestTimeout { get; set; }
+        public Dictionary<string, string> CustomHeaders { get; set; }
+        public int? Retries { get; set; } = 1;
+        public CacheConfig CacheConfig { get; set; } = new(false);
+    }
+}
+
+```
+
+In the `appsettings.json` file you can configure the necessary flagsmith values.
+
+```json
+{
+ "AllowedHosts": "*",
+ "FlagsmithConfiguration": {
+  "EnvironmentKey": "FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY",
+  "EnableClientSideEvaluation": false,
+  "EnvironmentRefreshIntervalSeconds": 60,
+  "EnableAnalytics": true,
+  "RequestTimeout": 10,
+  "Retries": 3
+ }
+}
 ```
 
 </TabItem>
@@ -1076,7 +1330,7 @@ const flagsmith = new Flagsmith({
    depending on if you are using Local or Remote Evaluation
    Required.
    */
- environmentKey: '<FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY>',
+ environmentKey: 'FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY',
 
  /*
    Override the default Flagsmith API URL if you are self-hosting.
@@ -1211,7 +1465,7 @@ $flagsmith = new Flagsmith(
 <TabItem value="go" label="Go">
 
 ```go
-client := flagsmith.NewClient(os.Getenv("FLAGSMITH_API_KEY"),
+client := flagsmith.NewClient(os.Getenv("FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY"),
         // Override the default Flagsmith API URL if you are self-hosting.
         // Defaults to https://edge.api.flagsmith.com/api/v1/
         flagsmith.WithBaseURL("http://localhost:8080/api/v1/"),
@@ -1219,7 +1473,7 @@ client := flagsmith.NewClient(os.Getenv("FLAGSMITH_API_KEY"),
         // Controls which mode to run in; local or remote evaluation.
         // See the `SDKs Overview Page` for more info
         // Defaults to False
-        flagsmith.WithLocalEvaluation(),
+        func WithLocalEvaluation(ctx context.Context),
 
         // The network timeout in seconds.
         flagsmith.WithRequestTimeout(10*time.Second),
@@ -1231,7 +1485,7 @@ client := flagsmith.NewClient(os.Getenv("FLAGSMITH_API_KEY"),
 
         // Controls whether Flag Analytics data is sent to the Flagsmith API
         // See https://docs.flagsmith.com/advanced-use/flag-analytics
-        flagsmith.WithAnalytics(),
+        flagsmith.WithAnalytics(ctx),
 
         // Sets `resty.Client` options.  `SetRetryCount` and `SetRetryWaitTime`
         // Ref: https://pkg.go.dev/github.com/go-resty/resty/v2#Client.SetRetryCount
@@ -1250,8 +1504,16 @@ client := flagsmith.NewClient(os.Getenv("FLAGSMITH_API_KEY"),
         // response
         flagsmith.WithDefaultHandler(defaultFlagHandler),
 
-        // You can specify the context to use.
-        flagsmith.WithContext(ctx),
+        // Allows the client to use any logger that implements the `Logger` interface.
+        flagsmith.WithLogger(ctx),
+
+        // WithProxy returns an Option function that sets the proxy(to be used by internal resty client).
+        // The proxyURL argument is a string representing the URL of the proxy server to use, e.g. "http://proxy.example.com:8080".
+        func WithProxy(proxyURL string) Option {
+            return func(c *Client) {
+                c.client.SetProxy(proxyURL)
+            }
+        }
 )
 ```
 
@@ -1324,7 +1586,7 @@ config :flagsmith_engine, :configuration,
        # Note that this is either the `Environment API` key or the
        # `Server Side SDK Token` depending on if you are using Local or
        # Remote Evaluation
-       environment_key: "<YOUR SDK KEY>",
+       environment_key: "FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY",
        #
        # Override the default Flagsmith API URL if you are self-hosting.
        # Defaults to https://edge.api.flagsmith.com/api/v1/
@@ -1366,7 +1628,7 @@ configuration.
 
 ```elixir
 client_configuration = Flagsmith.Client.new(
-        environment_key: "<YOUR SDK KEY>",
+        environment_key: "FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY",
         api_url: "https://api.yourselfhostedflagsmith.com/api/v1",
         default_flag_handler: function_defaults_to_not_found,
         custom_headers: [{"to add to", "the requests"}],
@@ -1382,7 +1644,7 @@ client_configuration = Flagsmith.Client.new(
 # or
 
 {:ok, flags} = Flagsmith.Client.get_environment_flags(
-        environment_key: "<YOUR SDK KEY>",
+        environment_key: "FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY",
         api_url: "https://api.yourselfhostedflagsmith.com/api/v1",
         default_flag_handler: function_defaults_to_not_found,
         custom_headers: [{"to add to", "the requests"}],
@@ -1419,7 +1681,7 @@ will be set for you:
 ```java
 // use in-memory caching with Flagsmith defaults as described above
 final FlagsmithClient flagsmithClient = FlagsmithClient.newBuilder()
-                .setApiKey("YOUR_ENV_API_KEY")
+                .setApiKey("FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY")
                 .withConfiguration(FlagsmithConfig
                         .newBuilder()
                         .baseURI("http://yoururl.com")
@@ -1435,7 +1697,7 @@ If you would like to change the default settings, you can overwrite them by usin
 ```java
 // use in-memory caching with custom configuration
 final FlagsmithClient flagsmithClient = FlagsmithClient.newBuilder()
-                .setApiKey("YOUR_ENV_API_KEY")
+                .setApiKey("FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY")
                 .withConfiguration(FlagsmithConfig
                         .newBuilder()
                         .baseURI("http://yoururl.com")
@@ -1473,7 +1735,7 @@ Make sure you select a project level cache key that will never be a user identif
 // use in-memory caching with Flagsmith defaults and project level caching enabled
 final String projectLevelCacheKey = "some-key-to-avoid-clashing-with-user-identifiers";
 final FlagsmithClient flagsmithClient = FlagsmithClient.newBuilder()
-                .setApiKey("YOUR_ENV_API_KEY")
+                .setApiKey("FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY")
                 .withConfiguration(FlagsmithConfig
                         .newBuilder()
                         .baseURI("http://yoururl.com")
@@ -1522,7 +1784,7 @@ const redisClient = redis.createClient({
 });
 
 flagsmith.init({
- environmentID: '<Flagsmith Environment API Key>',
+ environmentID: 'FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY',
  cache: {
   has: (key) =>
    new Promise((resolve, reject) => {
@@ -1557,6 +1819,51 @@ router.get('/', function (req, res, next) {
  });
 });
 ```
+
+</TabItem>
+<TabItem value="php" label="PHP">
+
+```php
+$flagsmith = (new Flagsmith("FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY"));
+// This will load the environment from cache (or API, if cache does not exist.)
+$flagsmith->updateEnvironment();
+```
+
+It is recommended to use a psr simple-cache implementation to cache the environment document between multiple requests.
+
+```sh
+composer require symfony/cache
+```
+
+```php
+$flagsmith = (new Flagsmith("FLAGSMITH_SERVER_SIDE_ENVIRONMENT_KEY"))
+  ->withCache(new Psr16Cache(new FilesystemAdapter()));
+// Cache the environment call to reduce network calls for each and every evaluation.
+// This will load the environment from cache (or API, if cache does not exist.)
+$flagsmith->updateEnvironment();
+```
+
+An optional cron job can be added to refresh this cache at a set time depending on your choice. Please set
+EnvironmentTTL value for this purpose.
+
+```php
+// the environment will be cached for 100 seconds.
+$flagsmith = $flagsmith->withEnvironmentTtl(100);
+$flagsmith->updateEnvironment();
+```
+
+```sh
+* * * 1 40 php index.php # using cli
+* * * 1 40 curl http://localhost:8000/ # using http
+```
+
+Note:
+
+- For the environment cache, please use the server key generated from the Flagsmith Settings menu. The key's prefix is
+  `ser.`.
+- The cache is important for concurrent requests. Without the cache, each request in PHP is a different process with its
+  own memory objects. The cache (filesystem or other) would enforce that the network call is reduced to a file system
+  one.
 
 </TabItem>
 </Tabs>
@@ -1596,7 +1903,7 @@ then include an implementation, i.e.:
 All our SDKs are Open Source.
 
 <Tabs groupId="language">
-<TabItem value="py" label="Python">
+<TabItem value="python" label="Python">
 
 https://github.com/Flagsmith/flagsmith-python-client
 

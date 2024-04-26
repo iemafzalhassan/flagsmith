@@ -1,16 +1,13 @@
 import React, { Component } from 'react'
 import ChangeRequestStore from 'common/stores/change-requests-store'
 import OrganisationStore from 'common/stores/organisation-store'
-import UserGroupStore from 'common/stores/user-group-store'
 import FeatureListStore from 'common/stores/feature-list-store'
 import withSegmentOverrides from 'common/providers/withSegmentOverrides'
 import ProjectStore from 'common/stores/project-store'
 import ConfigProvider from 'common/providers/ConfigProvider'
 import Constants from 'common/constants'
 import Button from 'components/base/forms/Button'
-import GroupSelect from 'components/GroupSelect'
 import UserSelect from 'components/UserSelect'
-import ValueEditor from 'components/ValueEditor'
 import CreateFlagModal from 'components/modals/CreateFlag'
 import InfoMessage from 'components/InfoMessage'
 import Permission from 'common/providers/Permission'
@@ -18,8 +15,16 @@ import JSONReference from 'components/JSONReference'
 import MyGroupsSelect from 'components/MyGroupsSelect'
 import { getMyGroups } from 'common/services/useMyGroup'
 import { getStore } from 'common/store'
+import PageTitle from 'components/PageTitle'
+import Icon from 'components/Icon'
+import { close } from 'ionicons/icons'
+import { IonIcon } from '@ionic/react'
+import { useGetSegmentsQuery } from 'common/services/useSegment'
+import DiffFeature from 'components/diff/DiffFeature'
+import Breadcrumb from 'components/Breadcrumb'
+import SettingsButton from 'components/SettingsButton'
 
-const labelWidth = 200
+const labelWidth = 120
 
 const ChangeRequestsPage = class extends Component {
   static displayName = 'ChangeRequestsPage'
@@ -27,9 +32,8 @@ const ChangeRequestsPage = class extends Component {
   static contextTypes = {
     router: propTypes.object.isRequired,
   }
-
   getApprovals = (users, approvals) =>
-    users?.filter((v) => approvals?.includes(v.group))
+    users?.filter((v) => approvals?.includes(v.id))
 
   getGroupApprovals = (groups, approvals) =>
     groups.filter((v) => approvals.find((a) => a.group === v.id))
@@ -96,17 +100,24 @@ const ChangeRequestsPage = class extends Component {
   componentDidMount = () => {}
 
   deleteChangeRequest = () => {
-    openConfirm(
-      'Delete Change Request',
-      <div>Are you sure you want to delete this change request?</div>,
-      () => {
+    openConfirm({
+      body: (
+        <div>
+          Are you sure you want to delete this change request? This action
+          cannot be undone.
+        </div>
+      ),
+      destructive: true,
+      onYes: () => {
         AppActions.deleteChangeRequest(this.props.match.params.id, () => {
           this.context.router.history.replace(
             `/project/${this.props.match.params.projectId}/environment/${this.props.match.params.environmentId}/change-requests`,
           )
         })
       },
-    )
+      title: 'Delete Change Request',
+      yesText: 'Confirm',
+    })
   }
 
   editChangeRequest = (projectFlag, environmentFlag) => {
@@ -116,7 +127,7 @@ const ChangeRequestsPage = class extends Component {
     openModal(
       'Edit Change Request',
       <CreateFlagModal
-        isEdit
+        history={this.props.router.history}
         environmentId={this.props.match.params.environmentId}
         projectId={this.props.match.params.projectId}
         changeRequest={ChangeRequestStore.model[id]}
@@ -149,17 +160,18 @@ const ChangeRequestsPage = class extends Component {
       new Date().valueOf()
     const scheduledDate = moment(changeRequest.feature_states[0].live_from)
 
-    openConfirm(
-      `${isScheduled ? 'Schedule' : 'Publish'} Change Request`,
-      <div>
-        Are you sure you want to {isScheduled ? 'schedule' : 'publish'} this
-        change request
-        {isScheduled
-          ? ` for ${scheduledDate.format('Do MMM YYYY hh:mma')}`
-          : ''}
-        ? This will adjust the feature for your environment.
-      </div>,
-      () => {
+    openConfirm({
+      body: (
+        <div>
+          Are you sure you want to {isScheduled ? 'schedule' : 'publish'} this
+          change request
+          {isScheduled
+            ? ` for ${scheduledDate.format('Do MMM YYYY hh:mma')}`
+            : ''}
+          ? This will adjust the feature for your environment.
+        </div>
+      ),
+      onYes: () => {
         AppActions.actionChangeRequest(
           this.props.match.params.id,
           'commit',
@@ -172,7 +184,8 @@ const ChangeRequestsPage = class extends Component {
           },
         )
       },
-    )
+      title: `${isScheduled ? 'Schedule' : 'Publish'} Change Request`,
+    })
   }
 
   fetchFeature = (featureId) => {
@@ -235,7 +248,9 @@ const ChangeRequestsPage = class extends Component {
       this.fetchFeature(featureId)
     }
     const user =
-      changeRequest && orgUsers.find((v) => v.id === changeRequest.user)
+      changeRequest &&
+      changeRequest.user &&
+      orgUsers.find((v) => v.id === changeRequest.user)
     const committedBy =
       (changeRequest.committed_by &&
         orgUsers &&
@@ -244,11 +259,8 @@ const ChangeRequestsPage = class extends Component {
     const isScheduled =
       new Date(changeRequest.feature_states[0].live_from).valueOf() >
       new Date().valueOf()
+
     const scheduledDate = moment(changeRequest.feature_states[0].live_from)
-    const isMv =
-      projectFlag &&
-      projectFlag.multivariate_options &&
-      !!projectFlag.multivariate_options.length
 
     const approval =
       changeRequest &&
@@ -265,44 +277,8 @@ const ChangeRequestsPage = class extends Component {
     )
 
     const minApprovals = environment.minimum_change_request_approvals || 0
-    const newValue =
-      changeRequest.feature_states[0] &&
-      Utils.featureStateToValue(
-        changeRequest.feature_states[0].feature_state_value,
-      )
-    const oldValue = environmentFlag && environmentFlag.feature_state_value
-    const newEnabled =
-      changeRequest.feature_states[0] && changeRequest.feature_states[0].enabled
-    const oldEnabled = environmentFlag && environmentFlag.enabled
-    let mvData = []
-    let mvChanged = false
-    if (isMv) {
-      mvData = projectFlag.multivariate_options.map((v) => {
-        const matchingOldValue =
-          environmentFlag.multivariate_feature_state_values.find(
-            (e) => e.multivariate_feature_option === v.id,
-          )
-        const matchingNewValue =
-          changeRequest.feature_states[0].multivariate_feature_state_values.find(
-            (e) => e.multivariate_feature_option === v.id,
-          )
-        if (
-          matchingOldValue.percentage_allocation !==
-          matchingNewValue.percentage_allocation
-        ) {
-          mvChanged = true
-        }
-        return {
-          changed:
-            matchingOldValue.percentage_allocation !==
-            matchingNewValue.percentage_allocation,
-          newValue: matchingNewValue.percentage_allocation,
-          oldValue: matchingOldValue.percentage_allocation,
-          value: Utils.featureStateToValue(v),
-        }
-      })
-    }
     const isYourChangeRequest = changeRequest.user === AccountStore.getUser().id
+
     return (
       <Permission
         level='environment'
@@ -320,32 +296,30 @@ const ChangeRequestsPage = class extends Component {
                 style={{ opacity: ChangeRequestStore.isLoading ? 0.25 : 1 }}
                 data-test='change-requests-page'
                 id='change-requests-page'
-                className='app-container container-fluid'
+                className='app-container container-fluid mt-1'
               >
-                <Row>
-                  <Flex className='mb-2 ml-3'>
-                    <Row>
-                      <Flex>
-                        <h3 className='ml-0'>{changeRequest.title}</h3>
-                      </Flex>
-                    </Row>
-                    <div className='list-item-footer faint'>
-                      Created at{' '}
-                      {moment(changeRequest.created_at).format(
-                        'Do MMM YYYY HH:mma',
-                      )}{' '}
-                      by {changeRequest.user && user.first_name}{' '}
-                      {user && user.last_name}
-                    </div>
-                    <p className='mt-2'>{changeRequest.description}</p>
-                  </Flex>
-                  <div className='mr-4'>
-                    {(!committedBy || !committedBy.id || isScheduled) && (
+                <Breadcrumb
+                  items={[
+                    {
+                      title: isScheduled ? 'Scheduling' : 'Change requests',
+                      url: `/project/${
+                        this.props.match.params.projectId
+                      }/environment/${this.props.match.params.environmentId}/${
+                        isScheduled ? 'scheduled-changes' : 'change-requests'
+                      }`,
+                    },
+                  ]}
+                  currentPage={changeRequest.title}
+                />
+                <PageTitle
+                  cta={
+                    (!changeRequest?.committed_at ||
+                      moment(changeRequest?.feature_states[0].live_from) >
+                        moment()) && (
                       <Row>
                         <Button
-                          theme='danger'
+                          theme='secondary'
                           onClick={this.deleteChangeRequest}
-                          size='small'
                         >
                           Delete
                         </Button>
@@ -354,22 +328,29 @@ const ChangeRequestsPage = class extends Component {
                             this.editChangeRequest(projectFlag, environmentFlag)
                           }
                           className='ml-2'
-                          size='small'
                         >
                           Edit
                         </Button>
                       </Row>
-                    )}
-                  </div>
-                </Row>
+                    )
+                  }
+                  title={changeRequest.title}
+                >
+                  Created{' '}
+                  {moment(changeRequest.created_at).format(
+                    'Do MMM YYYY HH:mma',
+                  )}{' '}
+                  by{' '}
+                  {user
+                    ? `${user.first_name} ${user.last_name}`
+                    : 'Unknown user'}
+                </PageTitle>
+                <p className='mt-2'>{changeRequest.description}</p>
                 <div className='row'>
                   <div className='col-md-12'>
                     {isScheduled && (
-                      <Row>
-                        <InfoMessage
-                          icon='ion-md-calendar'
-                          title='Scheduled Change'
-                        >
+                      <div className='col-md-6 mb-4'>
+                        <InfoMessage icon='calendar' title='Scheduled Change'>
                           This feature change{' '}
                           {changeRequest?.committedAt
                             ? 'is scheduled to'
@@ -383,22 +364,23 @@ const ChangeRequestsPage = class extends Component {
                           {!!changeRequest?.committedAt &&
                             'You can still edit / remove the change request before this date.'}
                         </InfoMessage>
-                      </Row>
+                      </div>
                     )}
                     <InputGroup
+                      className='col-md-6'
                       component={
-                        <div>
+                        <>
                           {!Utils.getFlagsmithHasFeature(
                             'disable_users_as_reviewers',
                           ) && (
-                            <>
-                              <Row>
-                                <span>
-                                  <strong style={{ width: 70 }}>
-                                    Assigned users
-                                  </strong>
-                                </span>
-                              </Row>
+                            <div className='mb-4'>
+                              <SettingsButton
+                                onClick={() =>
+                                  this.setState({ showUsers: true })
+                                }
+                              >
+                                Assigned users
+                              </SettingsButton>
                               <Row className='mt-2'>
                                 {ownerUsers.length !== 0 &&
                                   ownerUsers.map((u) => (
@@ -414,18 +396,11 @@ const ChangeRequestsPage = class extends Component {
                                       <span className='font-weight-bold'>
                                         {u.first_name} {u.last_name}
                                       </span>
-                                      <span className='chip-icon ion ion-ios-close' />
+                                      <span className='chip-icon ion'>
+                                        <IonIcon icon={close} />
+                                      </span>
                                     </Row>
                                   ))}
-                                <Button
-                                  theme='text'
-                                  onClick={() =>
-                                    this.setState({ showUsers: true })
-                                  }
-                                  style={{ marginBottom: 10, marginTop: 4 }}
-                                >
-                                  Add user
-                                </Button>
                               </Row>
                               <UserSelect
                                 users={orgUsers}
@@ -441,300 +416,116 @@ const ChangeRequestsPage = class extends Component {
                                   })
                                 }
                               />
-                            </>
+                            </div>
                           )}
-                          {Utils.getFlagsmithHasFeature(
-                            'enable_groups_as_reviewers',
-                          ) && (
-                            <>
-                              <Row>
-                                <span>
-                                  <strong style={{ width: 70 }}>
-                                    Assigned groups
-                                  </strong>
-                                </span>
-                              </Row>
-                              <Row className='mt-2'>
-                                {!!ownerGroups?.length &&
-                                  ownerGroups.map((g) => (
-                                    <Row
-                                      key={g.id}
-                                      onClick={() =>
-                                        this.removeOwner(g.id, false)
-                                      }
-                                      className='chip'
-                                      style={{
-                                        marginBottom: 4,
-                                        marginTop: 4,
-                                      }}
-                                    >
-                                      <span className='font-weight-bold'>
-                                        {g.name}
-                                      </span>
-                                      <span className='chip-icon ion ion-ios-close' />
-                                    </Row>
-                                  ))}
-                                <Button
-                                  theme='text'
-                                  onClick={() =>
-                                    this.setState({ showGroups: true })
-                                  }
-                                >
-                                  Add group
-                                </Button>
-                              </Row>
-                              <MyGroupsSelect
-                                orgId={AccountStore.getOrganisation().id}
-                                groups={orgGroups}
-                                value={
-                                  ownerGroups && ownerGroups.map((v) => v.id)
-                                }
-                                onAdd={this.addOwner}
-                                onRemove={this.removeOwner}
-                                isOpen={this.state.showGroups}
-                                onToggle={() =>
-                                  this.setState({
-                                    showGroups: !this.state.showGroups,
-                                  })
-                                }
-                              />
-                            </>
-                          )}
-                        </div>
+                          <div className='mb-4'>
+                            <SettingsButton
+                              onClick={() =>
+                                this.setState({ showGroups: true })
+                              }
+                            >
+                              Assigned groups
+                            </SettingsButton>
+                            <Row className='mt-2'>
+                              {!!ownerGroups?.length &&
+                                ownerGroups.map((g) => (
+                                  <Row
+                                    key={g.id}
+                                    onClick={() =>
+                                      this.removeOwner(g.id, false)
+                                    }
+                                    className='chip'
+                                    style={{
+                                      marginBottom: 4,
+                                      marginTop: 4,
+                                    }}
+                                  >
+                                    <span className='font-weight-bold'>
+                                      {g.name}
+                                    </span>
+                                    <span className='chip-icon ion'>
+                                      <IonIcon icon={close} />
+                                    </span>
+                                  </Row>
+                                ))}
+                            </Row>
+                            <MyGroupsSelect
+                              orgId={AccountStore.getOrganisation().id}
+                              groups={orgGroups}
+                              value={
+                                ownerGroups && ownerGroups.map((v) => v.id)
+                              }
+                              onAdd={this.addOwner}
+                              onRemove={this.removeOwner}
+                              isOpen={this.state.showGroups}
+                              onToggle={() =>
+                                this.setState({
+                                  showGroups: !this.state.showGroups,
+                                })
+                              }
+                            />
+                          </div>
+                        </>
                       }
                     />
-                    <Panel
-                      title={
-                        isScheduled ? 'Scheduled Change' : 'Change Request'
-                      }
-                      className='no-pad'
-                    >
-                      <div className='search-list p-3'>
-                        <Row
-                          className='mt-2'
-                          style={{
-                            marginLeft: '0.75rem',
-                            marginRight: '0.75rem',
-                          }}
-                        >
-                          <strong style={{ width: labelWidth }}>Feature</strong>
 
-                          <a
-                            target='_blank'
-                            className='btn-link'
-                            href={`/project/${
-                              this.props.match.params.projectId
-                            }/environment/${
-                              this.props.match.params.environmentId
-                            }/features?feature=${
-                              projectFlag && projectFlag.id
-                            }`}
-                            rel='noreferrer'
-                          >
-                            {projectFlag && projectFlag.name}
-                          </a>
-                        </Row>
-                        <Row
-                          className='mt-2'
-                          style={{
-                            marginLeft: '0.75rem',
-                            marginRight: '0.75rem',
-                          }}
-                        >
-                          <span style={{ width: labelWidth }} />
+                    <div>
+                      <Panel
+                        title={
+                          isScheduled ? 'Scheduled Change' : 'Change Request'
+                        }
+                        className='no-pad mb-2'
+                      >
+                        <div className='search-list change-request-list'>
+                          <Row className='list-item change-request-item px-4'>
+                            <div
+                              className='font-weight-medium mr-3'
+                              style={{ width: labelWidth }}
+                            >
+                              Feature:
+                            </div>
 
-                          <Flex>
-                            {!changeRequest.committed_at && (
-                              <strong>Live Version</strong>
-                            )}
-                          </Flex>
-                          <Flex>
-                            <strong>
-                              {isScheduled
-                                ? 'Scheduled Change'
-                                : 'Change Request'}
-                            </strong>
-                          </Flex>
-                        </Row>
-
-                        <Row
-                          className='mt-2'
-                          style={{
-                            marginLeft: '0.75rem',
-                            marginRight: '0.75rem',
-                            opacity:
-                              newEnabled === oldEnabled &&
-                              !changeRequest.committed_at
-                                ? 0.25
-                                : 1,
-                          }}
-                        >
-                          <strong style={{ width: labelWidth }}>Enabled</strong>
-                          <Flex>
-                            {!changeRequest.committed_at && (
-                              <Switch checked={oldEnabled} />
-                            )}
-                          </Flex>
-                          <Flex>
-                            <Switch checked={newEnabled} />
-                          </Flex>
-                        </Row>
-                        <Row
-                          className='mt-2'
-                          style={{
-                            marginLeft: '0.75rem',
-                            marginRight: '0.75rem',
-                            opacity:
-                              oldValue === newValue &&
-                              !changeRequest.committed_at
-                                ? 0.25
-                                : 1,
-                          }}
-                        >
-                          <strong style={{ width: labelWidth }}>Value</strong>
-                          <Flex className='mr-2'>
-                            {!changeRequest.committed_at && (
-                              <ValueEditor
-                                value={Utils.getTypedValue(oldValue)}
-                              />
-                            )}
-                          </Flex>
-                          <Flex className='ml-2'>
-                            <ValueEditor value={newValue} />
-                          </Flex>
-                        </Row>
-                        {isMv && (
-                          <Row
-                            className='mt-2 align-start'
-                            style={{
-                              marginLeft: '0.75rem',
-                              marginRight: '0.75rem',
-                              opacity:
-                                !mvChanged && !changeRequest.committed_at
-                                  ? 0.25
-                                  : 1,
-                            }}
-                          >
-                            <strong style={{ width: labelWidth }}>
-                              Variations
-                            </strong>
-                            <Flex className='mr-2'>
-                              {mvData.map((v, i) => (
-                                <div
-                                  key={i}
-                                  className='mb-4'
-                                  style={{
-                                    opacity: mvChanged && !v.changed ? 0.25 : 1,
-                                  }}
-                                >
-                                  <div>
-                                    <div className='mb-2'>
-                                      <strong>Variation {i + 1}</strong>
-                                    </div>
-                                    <Row>
-                                      <Flex>
-                                        <ValueEditor
-                                          value={Utils.getTypedValue(v.value)}
-                                        />
-                                      </Flex>
-                                    </Row>
-                                  </div>
-                                  <Row>
-                                    <Flex className='ml-4'>
-                                      <span>
-                                        Environment weight:{' '}
-                                        <strong>{v.oldValue}%</strong>
-                                      </span>
-                                    </Flex>
-                                    <Flex className='mr-4'>
-                                      <span>
-                                        Environment weight:{' '}
-                                        <strong>{v.newValue}%</strong>
-                                      </span>
-                                    </Flex>
-                                  </Row>
-                                </div>
-                              ))}
-                            </Flex>
+                            <a
+                              target='_blank'
+                              className='btn-link font-weight-medium'
+                              href={`/project/${
+                                this.props.match.params.projectId
+                              }/environment/${
+                                this.props.match.params.environmentId
+                              }/features?feature=${
+                                projectFlag && projectFlag.id
+                              }`}
+                              rel='noreferrer'
+                            >
+                              {projectFlag && projectFlag.name}
+                            </a>
                           </Row>
-                        )}
-
-                        <Row className='mt-2'>
-                          <span style={{ width: labelWidth }} />
-
-                          <Flex />
-                          <Flex>
-                            {approvedBy.length ? (
-                              <div className='text-right mb-2 mr-2'>
-                                <span className='ion icon-primary text-primary icon ion-md-checkbox mr-2' />
-                                Approved by {approvedBy.join(', ')}
-                              </div>
-                            ) : (
-                              !!minApprovals && (
-                                <div className='text-right mb-2 mr-2'>
-                                  <span className='ion icon-primary text-primary icon ion-ios-information-circle mr-2' />
-                                  You need at least {minApprovals} approval
-                                  {minApprovals !== 1 ? 's' : ''} to{' '}
-                                  {isScheduled ? 'schedule' : 'publish'} this
-                                  change
-                                </div>
-                              )
-                            )}
-
-                            {changeRequest.committed_at ? (
-                              <div className='text-right mr-2'>
-                                <span className='ion icon-primary text-primary icon ion-ios-git-merge mr-2' />
-                                Committed at{' '}
-                                {moment(changeRequest.committed_at).format(
-                                  'Do MMM YYYY HH:mma',
-                                )}{' '}
-                                by {committedBy.first_name}{' '}
-                                {committedBy.last_name}
-                              </div>
-                            ) : (
-                              <Row className='text-right mr-2'>
-                                <Flex />
-                                {!isYourChangeRequest &&
-                                  Utils.renderWithPermission(
-                                    approvePermission,
-                                    Constants.environmentPermissions(
-                                      'Approve Change Requests',
-                                    ),
-                                    <Button
-                                      disabled={approved || !approvePermission}
-                                      onClick={this.approveChangeRequest}
-                                      className='btn'
-                                    >
-                                      <span className='ion icon ion-md-checkbox text-light mr-2' />
-                                      {approved ? 'Approved' : 'Approve'}
-                                    </Button>,
-                                  )}
-                                {Utils.renderWithPermission(
-                                  publishPermission,
-                                  Constants.environmentPermissions(
-                                    'Update Feature States',
-                                  ),
-                                  <Button
-                                    disabled={
-                                      approvedBy.length < minApprovals ||
-                                      !publishPermission
-                                    }
-                                    onClick={this.publishChangeRequest}
-                                    className='btn ml-2'
-                                  >
-                                    <span className='ion icon ion-ios-git-merge text-light mr-2' />
-                                    {isScheduled
-                                      ? 'Publish Scheduled'
-                                      : 'Publish'}{' '}
-                                    Change
-                                  </Button>,
-                                )}
-                              </Row>
-                            )}
-                          </Flex>
-                        </Row>
-                      </div>
-                    </Panel>
+                        </div>
+                      </Panel>
+                      {environmentFlag && changeRequest ? (
+                        <DiffFeature
+                          noChangesMessage={
+                            'This change request contains no changes.'
+                          }
+                          tabTheme={'pill'}
+                          oldState={[
+                            {
+                              ...environmentFlag,
+                              feature_state_value: Utils.valueToFeatureState(
+                                environmentFlag.feature_state_value,
+                              ),
+                            },
+                          ]}
+                          newState={[changeRequest.feature_states[0]]}
+                          featureId={projectFlag.id}
+                          projectId={this.props.match.params.projectId}
+                        />
+                      ) : (
+                        <div className='text-center'>
+                          <Loader />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <JSONReference
@@ -742,6 +533,68 @@ const ChangeRequestsPage = class extends Component {
                   title={'Change Request'}
                   json={ChangeRequestStore.model?.[id]}
                 />
+                <Row className='mt-4'>
+                  <Flex>
+                    {approvedBy.length ? (
+                      <div className='text-right mb-2 mr-2 font-weight-medium'>
+                        Approved by {approvedBy.join(', ')}
+                      </div>
+                    ) : (
+                      !!minApprovals && (
+                        <div className='text-right mb-2 mr-2 font-weight-medium'>
+                          You need at least {minApprovals} approval
+                          {minApprovals !== 1 ? 's' : ''} to{' '}
+                          {isScheduled ? 'schedule' : 'publish'} this change
+                        </div>
+                      )
+                    )}
+
+                    {changeRequest.committed_at ? (
+                      <div className='mr-2 font-weight-medium'>
+                        Committed at{' '}
+                        {moment(changeRequest.committed_at).format(
+                          'Do MMM YYYY HH:mma',
+                        )}{' '}
+                        by {committedBy.first_name} {committedBy.last_name}
+                      </div>
+                    ) : (
+                      <Row className='text-right'>
+                        <Flex />
+                        {!isYourChangeRequest &&
+                          Utils.renderWithPermission(
+                            approvePermission,
+                            Constants.environmentPermissions(
+                              'Approve Change Requests',
+                            ),
+                            <Button
+                              disabled={approved || !approvePermission}
+                              onClick={this.approveChangeRequest}
+                              theme='secondary'
+                            >
+                              {approved ? 'Approved' : 'Approve'}
+                            </Button>,
+                          )}
+                        {Utils.renderWithPermission(
+                          publishPermission,
+                          Constants.environmentPermissions(
+                            'Update Feature States',
+                          ),
+                          <Button
+                            disabled={
+                              approvedBy.length < minApprovals ||
+                              !publishPermission
+                            }
+                            onClick={this.publishChangeRequest}
+                            className='btn ml-2'
+                          >
+                            {isScheduled ? 'Publish Scheduled' : 'Publish'}{' '}
+                            Change
+                          </Button>,
+                        )}
+                      </Row>
+                    )}
+                  </Flex>
+                </Row>
 
                 <Row>
                   <div style={{ minHeight: 300 }} />

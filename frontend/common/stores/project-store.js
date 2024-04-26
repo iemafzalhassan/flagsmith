@@ -1,10 +1,14 @@
 import { getIsWidget } from 'components/pages/WidgetPage'
+import OrganisationStore from './organisation-store'
 
 import Constants from 'common/constants'
+import Utils from 'common/utils/utils'
+import { getStore } from 'common/store'
+import { projectService } from 'common/services/useProject'
+import { environmentService } from 'common/services/useEnvironment'
 
 const Dispatcher = require('../dispatcher/dispatcher')
 const BaseStore = require('./base/_store')
-const OrganisationStore = require('./organisation-store')
 
 const data = require('../data/base/_data')
 
@@ -48,6 +52,9 @@ const controller = {
                 ])
               }
               store.saved()
+              getStore().dispatch(
+                environmentService.util.invalidateTags(['Environment']),
+              )
               AppActions.refreshOrganisation()
             }),
         ),
@@ -73,6 +80,9 @@ const controller = {
       const index = _.findIndex(store.model.environments, { id: env.id })
       store.model.environments[index] = res
       store.saved()
+      getStore().dispatch(
+        environmentService.util.invalidateTags(['Environment']),
+      )
       AppActions.refreshOrganisation()
     })
   },
@@ -80,6 +90,7 @@ const controller = {
     store.saving()
     data.put(`${Project.api}projects/${project.id}/`, project).then((res) => {
       store.model = Object.assign(store.model, res)
+      getStore().dispatch(projectService.util.invalidateTags(['Project']))
       store.saved()
     })
   },
@@ -92,6 +103,12 @@ const controller = {
         data.get(`${Project.api}environments/?project=${id}`).catch(() => []),
       ])
         .then(([project, environments]) => {
+          project.max_segments_allowed = project.max_segments_allowed
+          project.max_features_allowed = project.max_features_allowed
+          project.max_segment_overrides_allowed =
+            project.max_segment_overrides_allowed
+          project.total_features = project.total_features || 0
+          project.total_segments = project.total_segments || 0
           store.model = Object.assign(project, {
             environments: _.sortBy(environments.results, 'name'),
           })
@@ -118,6 +135,12 @@ const controller = {
         data.get(`${Project.api}environments/?project=${id}`).catch(() => []),
       ])
         .then(([project, environments]) => {
+          project.max_segments_allowed = project.max_segments_allowed
+          project.max_features_allowed = project.max_features_allowed
+          project.max_segment_overrides_allowed =
+            project.max_segment_overrides_allowed
+          project.total_features = project.total_features || 0
+          project.total_segments = project.total_segments || 0
           store.model = Object.assign(project, {
             environments: _.sortBy(environments.results, 'name'),
           })
@@ -133,6 +156,7 @@ const controller = {
         })
         .catch(() => {
           if (!getIsWidget()) {
+            AsyncStorage.removeItem('lastEnv')
             document.location.href = '/404?entity=project'
           }
         })
@@ -149,6 +173,8 @@ const controller = {
 const store = Object.assign({}, BaseStore, {
   getEnvironment: (api_key) =>
     store.model && _.find(store.model.environments, { api_key }),
+  getEnvironmentById: (id) =>
+    store.model && _.find(store.model.environments, { id }),
   getEnvironmentIdFromKey: (api_key) => {
     const env = _.find(store.model.environments, { api_key })
     return env && env.id
@@ -162,6 +188,31 @@ const store = Object.assign({}, BaseStore, {
     })
   },
   getEnvs: () => store.model && store.model.environments,
+  getIsVersioned: (api_key) => {
+    const env = _.find(store.model.environments, { api_key })
+    return env && env.use_v2_feature_versioning
+  },
+  getMaxFeaturesAllowed: () => {
+    return store.model && store.model.max_features_allowed
+  },
+  getMaxSegmentOverridesAllowed: () => {
+    return store.model && store.model.max_segment_overrides_allowed
+  },
+  getMaxSegmentsAllowed: () => {
+    return store.model && store.model.max_segments_allowed
+  },
+  getStaleFlagsLimit: () => {
+    return store.model && store.model.stale_flags_limit_days
+  },
+  getTotalFeatures: () => {
+    return store.model && store.model.total_features
+  },
+  getTotalSegmentOverrides: () => {
+    return store.model && store.model.environment.total_segment_overrides
+  },
+  getTotalSegments: () => {
+    return store.model && store.model.total_segments
+  },
   id: 'project',
   model: null,
 })

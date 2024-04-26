@@ -23,6 +23,7 @@ from django.utils.translation import ugettext_lazy as _
 from django_lifecycle import (
     AFTER_CREATE,
     BEFORE_CREATE,
+    BEFORE_SAVE,
     LifecycleModelMixin,
     hook,
 )
@@ -70,11 +71,11 @@ from features.value_types import (
     INTEGER,
     STRING,
 )
+from features.versioning.models import EnvironmentFeatureVersion
 from projects.models import Project
 from projects.tags.models import Tag
 
 from . import audit_helpers
-from .dataclasses import EnvironmentFeatureOverridesData
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +95,14 @@ class Feature(
         Project,
         related_name="features",
         help_text=_(
-            "Changing the project selected will remove previous Feature States for the previously"
+            "Changing the project selected will remove previous Feature States for the previously "
             "associated projects Environments that are related to this Feature. New default "
             "Feature States will be created for the new selected projects Environments for this "
             "Feature. Also this will remove any Tags associated with a feature as Tags are Project defined"
         ),
-        on_delete=models.CASCADE,
+        # Cascade deletes are decouple from the Django ORM. See this PR for details.
+        # https://github.com/Flagsmith/flagsmith/pull/3360/
+        on_delete=models.DO_NOTHING,
     )
     initial_value = models.CharField(
         max_length=20000, null=True, default=None, blank=True
@@ -112,6 +115,10 @@ class Feature(
     owners = models.ManyToManyField(
         "users.FFAdminUser", related_name="owned_features", blank=True
     )
+    group_owners = models.ManyToManyField(
+        "users.UserPermissionGroup", related_name="owned_features", blank=True
+    )
+
     is_server_key_only = models.BooleanField(default=False)
 
     history_record_class_path = "features.models.HistoricalFeature"
@@ -124,49 +131,9 @@ class Feature(
         # TODO: after upgrade to Django 4.0 use UniqueConstraint()
         ordering = ("id",)  # explicit ordering to prevent pagination warnings
 
-    @staticmethod
-    def get_overrides_data(
-        environment_id: int,
-    ) -> typing.Dict[int, EnvironmentFeatureOverridesData]:
-        """
-        Get the number of identity / segment overrides in a given environment for each feature in the
-        project.
-
-        :param environment_id: the id of the environment to get the overrides data for
-        :return: dictionary of {feature_id: EnvironmentFeatureOverridesData}
-        """
-        environment_feature_states_list = FeatureState.get_environment_flags_list(
-            environment_id
-        )
-        all_overrides_data = {}
-
-        for feature_state in environment_feature_states_list:
-            env_feature_overrides_data = all_overrides_data.setdefault(
-                feature_state.feature_id, EnvironmentFeatureOverridesData()
-            )
-            if feature_state.feature_segment_id:
-                env_feature_overrides_data.num_segment_overrides += 1
-            elif feature_state.identity_id:
-                env_feature_overrides_data.add_identity_override()
-            all_overrides_data[feature_state.feature_id] = env_feature_overrides_data
-
-        return all_overrides_data  # noqa
-
     @hook(AFTER_CREATE)
     def create_feature_states(self):
-        # create feature states for all environments
-        environments = self.project.environments.all()
-        for env in environments:
-            # unable to bulk create as we need signals
-            FeatureState.objects.create(
-                feature=self,
-                environment=env,
-                identity=None,
-                feature_segment=None,
-                enabled=False
-                if self.project.prevent_flag_defaults
-                else self.default_enabled,
-            )
+        FeatureState.create_initial_feature_states_for_feature(feature=self)
 
     def validate_unique(self, *args, **kwargs):
         """
@@ -235,6 +202,13 @@ class FeatureSegment(
         on_delete=models.CASCADE,
         related_name="feature_segments",
     )
+    environment_feature_version = models.ForeignKey(
+        "feature_versioning.EnvironmentFeatureVersion",
+        on_delete=models.CASCADE,
+        related_name="feature_segments",
+        null=True,
+        blank=True,
+    )
 
     _enabled = models.BooleanField(
         default=False,
@@ -260,12 +234,17 @@ class FeatureSegment(
     # specific attributes for managing the order of feature segments
     priority = models.PositiveIntegerField(editable=False, db_index=True)
     order_field_name = "priority"
-    order_with_respect_to = ("feature", "environment")
+    order_with_respect_to = ("feature", "environment", "environment_feature_version")
 
     objects = FeatureSegmentManager()
 
     class Meta:
-        unique_together = ("feature", "environment", "segment")
+        unique_together = (
+            "feature",
+            "environment",
+            "segment",
+            "environment_feature_version",
+        )
         ordering = ("priority",)
 
     def __str__(self):
@@ -283,11 +262,16 @@ class FeatureSegment(
         """
         return other and self.priority > other.priority
 
-    def clone(self, environment: "Environment") -> "FeatureSegment":
+    def clone(
+        self,
+        environment: "Environment",
+        environment_feature_version: "EnvironmentFeatureVersion" = None,
+    ) -> "FeatureSegment":
         clone = deepcopy(self)
         clone.id = None
         clone.uuid = uuid.uuid4()
         clone.environment = environment
+        clone.environment_feature_version = environment_feature_version
         clone.save()
         return clone
 
@@ -343,9 +327,12 @@ class FeatureSegment(
                         pair[0] for pair in new_feature_segment_id_priorities
                     ],
                     "user_id": getattr(request.user, "id", None),
-                    "master_api_key_id": request.master_api_key.id
-                    if hasattr(request, "master_api_key")
-                    else None,
+                    "master_api_key_id": (
+                        request.master_api_key.id
+                        if hasattr(request, "master_api_key")
+                        else None
+                    ),
+                    "changed_at": timezone.now().isoformat(),
                 }
             )
 
@@ -388,7 +375,11 @@ class FeatureSegment(
 class FeatureState(
     SoftDeleteExportableModel,
     LifecycleModelMixin,
-    abstract_base_auditable_model_factory(["uuid"]),
+    abstract_base_auditable_model_factory(
+        historical_records_excluded_fields=["uuid"],
+        change_details_excluded_fields=["live_from", "version"],
+        show_change_details_for_create=True,
+    ),
 ):
     history_record_class_path = "features.models.HistoricalFeatureState"
     related_object_type = RelatedObjectType.FEATURE_STATE
@@ -424,7 +415,6 @@ class FeatureState(
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    version = models.IntegerField(default=1, null=True)
     live_from = models.DateTimeField(null=True)
 
     change_request = models.ForeignKey(
@@ -436,10 +426,21 @@ class FeatureState(
 
     objects = FeatureStateManager()
 
+    environment_feature_version = models.ForeignKey(
+        "feature_versioning.EnvironmentFeatureVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="feature_states",
+    )
+
+    # to be deprecated!
+    version = models.IntegerField(default=1, null=True)
+
     class Meta:
         ordering = ["id"]
 
-    def __gt__(self, other):
+    # TODO: can we simplify this so we don't need `noqa`?
+    def __gt__(self, other: "FeatureState") -> bool:  # noqa: C901
         """
         Checks if the current feature state is higher priority that the provided feature state.
 
@@ -479,21 +480,27 @@ class FeatureState(
             )
 
         if self.type == other.type:
-            # we use live_from here as a priority over the version since
-            # the version is given when change requests are committed,
-            # hence the version for a feature state that is scheduled
-            # further in the future can be lower than a feature state
-            # whose live_from value is earlier.
-            # See: https://github.com/Flagsmith/flagsmith/issues/2030
-            if self.is_live:
-                if not other.is_live or self.is_more_recent_live_from(other):
-                    return True
-                elif self.live_from == other.live_from and self._is_more_recent_version(
-                    other
-                ):
-                    return True
+            if self.environment.use_v2_feature_versioning:
+                return (
+                    self.environment_feature_version > other.environment_feature_version
+                )
+            else:
+                # we use live_from here as a priority over the version since
+                # the version is given when change requests are committed,
+                # hence the version for a feature state that is scheduled
+                # further in the future can be lower than a feature state
+                # whose live_from value is earlier.
+                # See: https://github.com/Flagsmith/flagsmith/issues/2030
+                if self.is_live:
+                    if not other.is_live or self.is_more_recent_live_from(other):
+                        return True
+                    elif (
+                        self.live_from == other.live_from
+                        and self._is_more_recent_version(other)
+                    ):
+                        return True
 
-            return False
+                return False
 
         # if we've reached here, then self is just the environment default. In this case, other is higher priority if
         # it has a feature_segment or an identity
@@ -536,11 +543,14 @@ class FeatureState(
 
     @property
     def is_live(self) -> bool:
-        return (
-            self.version is not None
-            and self.live_from is not None
-            and self.live_from <= timezone.now()
-        )
+        if self.environment.use_v2_feature_versioning:
+            return self.environment_feature_version.is_live
+        else:
+            return (
+                self.version is not None
+                and self.live_from is not None
+                and self.live_from <= timezone.now()
+            )
 
     @property
     def is_scheduled(self) -> bool:
@@ -552,6 +562,7 @@ class FeatureState(
         live_from: datetime.datetime = None,
         as_draft: bool = False,
         version: int = None,
+        environment_feature_version: "EnvironmentFeatureVersion" = None,
     ) -> "FeatureState":
         # Cloning the Identity is not allowed because they are closely tied
         # to the environment
@@ -559,18 +570,25 @@ class FeatureState(
         clone = deepcopy(self)
         clone.id = None
         clone.uuid = uuid.uuid4()
-        clone.feature_segment = (
-            FeatureSegment.objects.get(
-                environment=env,
-                feature=clone.feature,
-                segment=self.feature_segment.segment,
+
+        if self.feature_segment:
+            # We can only create a new feature segment if we are cloning to another environment,
+            # or we are creating the feature segment in a new version (versioning v2). This is
+            # due to the default unique constraint on the FeatureSegment model which means that
+            # the same feature, segment and environment combination cannot exist more than once.
+            clone.feature_segment = (
+                self.feature_segment.clone(
+                    environment=env,
+                    environment_feature_version=environment_feature_version,
+                )
+                if env != self.environment or environment_feature_version is not None
+                else self.feature_segment
             )
-            if self.feature_segment
-            else None
-        )
+
         clone.environment = env
         clone.version = None if as_draft else version or self.version
         clone.live_from = live_from
+        clone.environment_feature_version = environment_feature_version
         clone.save()
         # clone the related objects
         self.feature_state_value.clone(clone)
@@ -671,18 +689,27 @@ class FeatureState(
         return getattr(self, "feature_state_value", None)
 
     @hook(BEFORE_CREATE)
-    def check_for_existing_feature_state(self):
-        # prevent duplicate feature states being created for an environment
+    @hook(BEFORE_SAVE, when="deleted", is_not=True)
+    def check_for_duplicate_feature_state(self):
         if self.version is None:
             return
-
-        if FeatureState.objects.filter(
+        filter_ = Q(
             environment=self.environment,
             feature=self.feature,
-            version=self.version,
             feature_segment=self.feature_segment,
             identity=self.identity,
-        ).exists():
+        )
+        if self.id:
+            filter_ &= ~Q(id=self.id)
+
+        if self.environment.use_v2_feature_versioning:
+            filter_ = filter_ & Q(
+                environment_feature_version=self.environment_feature_version
+            )
+        else:
+            filter_ = filter_ & Q(version=self.version)
+
+        if FeatureState.objects.filter(filter_).exists():
             raise ValidationError(
                 "Feature state already exists for this environment, feature, "
                 "version, segment & identity combination"
@@ -694,7 +721,11 @@ class FeatureState(
         Set the live_from date on newly created, version 1 feature states to maintain
         the previous behaviour.
         """
-        if self.version is not None and self.live_from is None:
+        if (
+            self.environment.use_v2_feature_versioning is False
+            and self.version is not None
+            and self.live_from is None
+        ):
             self.live_from = timezone.now()
 
     @hook(AFTER_CREATE)
@@ -740,67 +771,38 @@ class FeatureState(
         return fsv_type if fsv_type in accepted_types else STRING
 
     @classmethod
-    def get_environment_flags_list(
-        cls,
-        environment_id: int,
-        feature_name: str = None,
-        additional_filters: Q = None,
-    ) -> typing.List["FeatureState"]:
-        """
-        Get a list of the latest committed versions of FeatureState objects that are
-        associated with the given environment. Can be filtered to remove segment /
-        identity overrides using additional_filters argument.
-
-        Note: uses a single query to get all valid versions of a given environment's
-        feature states. The logic to grab the latest version is then handled in python
-        by building a dictionary. Returns a list of FeatureState objects.
-        """
-        # Get all feature states for a given environment with a valid live_from in the
-        # past. Note: includes all versions for a given environment / feature
-        # combination. We filter for the latest version later on.
-        feature_states = cls.objects.select_related(
-            "feature", "feature_state_value"
-        ).filter(
-            environment_id=environment_id,
-            live_from__isnull=False,
-            live_from__lte=timezone.now(),
-            version__isnull=False,
-            deleted_at__isnull=True,
-        )
-        if feature_name:
-            feature_states = feature_states.filter(feature__name__iexact=feature_name)
-
-        if additional_filters:
-            feature_states = feature_states.filter(additional_filters)
-
-        # Build up a dictionary in the form
-        # {(feature_id, feature_segment_id, identity_id): feature_state}
-        # and only keep the latest version for each feature.
-        feature_states_dict = {}
-        for feature_state in feature_states:
-            key = (
-                feature_state.feature_id,
-                feature_state.feature_segment_id,
-                feature_state.identity_id,
-            )
-            current_feature_state = feature_states_dict.get(key)
-            if not current_feature_state or feature_state > current_feature_state:
-                feature_states_dict[key] = feature_state
-
-        return list(feature_states_dict.values())
+    def create_initial_feature_states_for_environment(
+        cls, environment: "Environment"
+    ) -> None:
+        for feature in environment.project.features.all():
+            cls._create_initial_feature_state(feature=feature, environment=environment)
 
     @classmethod
-    def get_environment_flags_queryset(
-        cls, environment_id: int, feature_name: str = None
-    ) -> QuerySet:
-        """
-        Get a queryset of the latest live versions of an environments' feature states
-        """
+    def create_initial_feature_states_for_feature(cls, feature: "Feature") -> None:
+        for environment in feature.project.environments.all():
+            cls._create_initial_feature_state(feature=feature, environment=environment)
 
-        feature_states_list = cls.get_environment_flags_list(
-            environment_id, feature_name
-        )
-        return FeatureState.objects.filter(id__in=[fs.id for fs in feature_states_list])
+    @classmethod
+    def _create_initial_feature_state(
+        cls, feature: "Feature", environment: "Environment"
+    ) -> None:
+        kwargs = {
+            "feature": feature,
+            "environment": environment,
+            "enabled": (
+                False
+                if environment.project.prevent_flag_defaults
+                else feature.default_enabled
+            ),
+        }
+        if environment.use_v2_feature_versioning:
+            kwargs.update(
+                environment_feature_version=EnvironmentFeatureVersion.create_initial_version(
+                    environment=environment, feature=feature
+                )
+            )
+
+        cls.objects.create(**kwargs)
 
     @classmethod
     def get_next_version_number(
@@ -837,7 +839,32 @@ class FeatureState(
     def belongs_to_uncommited_change_request(self) -> bool:
         return self.change_request_id and not self.change_request.committed_at
 
+    def get_skip_create_audit_log(self) -> bool:
+        if self.belongs_to_uncommited_change_request:
+            # Change requests can create, update, or delete feature states that may never go live,
+            # since we already include the change requests in the audit log
+            # we don't want to create separate audit logs for the associated
+            # feature states
+            return True
+        elif self.environment_feature_version_id is not None:
+            # Don't create audit logs for feature states created using versioning
+            # v2 as we rely on the version history instead.
+            return True
+
+        return False
+
     def get_create_log_message(self, history_instance) -> typing.Optional[str]:
+        if (
+            history_instance.history_type == "+"
+            and (self.identity_id or self.feature_segment_id)
+            and self.enabled == self.get_environment_default().enabled
+        ):
+            # Don't create an Audit Log for overrides that are created which don't differ
+            # from the environment default. This likely means that an override was created
+            # for a remote config value, and hence there will be an AuditLog message
+            # created for the FeatureStateValue model change.
+            return
+
         if self.identity_id:
             return audit_helpers.get_identity_override_created_audit_message(self)
         elif self.feature_segment_id:
@@ -880,15 +907,6 @@ class FeatureState(
             # Account for cascade deletes
             return None
 
-    def get_audit_log_related_object_id(self, history_instance) -> int:
-        # Change requests can create, update, or delete feature states that may never go live,
-        # since we already include the change requests in the audit log
-        # we don't want to create separate audit logs for the associated
-        # feature states
-        if self.belongs_to_uncommited_change_request:
-            return None
-        return super().get_audit_log_related_object_id(history_instance)
-
     def get_extra_audit_log_kwargs(self, history_instance) -> dict:
         kwargs = super().get_extra_audit_log_kwargs(history_instance)
 
@@ -900,6 +918,21 @@ class FeatureState(
             kwargs["skip_signals_and_hooks"] = "send_environments_to_dynamodb"
 
         return kwargs
+
+    def get_environment_default(self) -> typing.Optional["FeatureState"]:
+        if self.feature_segment_id or self.identity_id:
+            return (
+                self.__class__.objects.get_live_feature_states(
+                    environment=self.environment,
+                    feature_id=self.feature_id,
+                    feature_segment_id__isnull=True,
+                    identity_id__isnull=True,
+                )
+                .order_by("-version", "-environment_feature_version__live_from")
+                .first()
+            )
+
+        return None
 
     def _get_environment(self) -> typing.Optional["Environment"]:
         return self.environment
@@ -914,6 +947,48 @@ class FeatureState(
             and self.version > other.version
         ) or (self.version is not None and other.version is None)
 
+    @staticmethod
+    def copy_identity_feature_states(
+        target_identity: "Identity", source_identity: "Identity"
+    ) -> None:
+        target_feature_states: dict[int, FeatureState] = (
+            target_identity.get_overridden_feature_states()
+        )
+        source_feature_states: dict[int, FeatureState] = (
+            source_identity.get_overridden_feature_states()
+        )
+
+        # Delete own feature states not in source_identity
+        feature_states_to_delete = list(
+            target_feature_states.keys() - source_feature_states.keys()
+        )
+        for feature_state_id in feature_states_to_delete:
+            target_feature_states[feature_state_id].delete()
+
+        # Clone source_identity's feature states to target_identity
+        for source_feature_id, source_feature_state in source_feature_states.items():
+            # Get target feature_state if exists in target identity or create new one
+            target_feature_state: FeatureState = target_feature_states.get(
+                source_feature_id
+            ) or FeatureState.objects.create(
+                environment=target_identity.environment,
+                identity=target_identity,
+                feature=source_feature_state.feature,
+            )
+
+            # Copy enabled value from source feature_state
+            target_feature_state.enabled = source_feature_states[
+                source_feature_id
+            ].enabled
+
+            # Copy feature state value from source feature_state
+            target_feature_state.feature_state_value.copy_from(
+                source_feature_state.feature_state_value
+            )
+
+            # Save changes to target feature_state
+            target_feature_state.save()
+
 
 class FeatureStateValue(
     AbstractBaseFeatureValueModel,
@@ -923,6 +998,8 @@ class FeatureStateValue(
     related_object_type = RelatedObjectType.FEATURE_STATE
     history_record_class_path = "features.models.HistoricalFeatureStateValue"
 
+    # After a FeatureState is created, a FeatureStateValue is
+    # automatically created in a post create hook.
     feature_state = models.OneToOneField(
         FeatureState, related_name="feature_state_value", on_delete=models.CASCADE
     )
@@ -936,6 +1013,14 @@ class FeatureStateValue(
         clone.feature_state = feature_state
         clone.save()
         return clone
+
+    def copy_from(self, source_feature_state_value: "FeatureStateValue"):
+        # Copy feature state type and values from given feature state value.
+        self.type = source_feature_state_value.type
+        self.boolean_value = source_feature_state_value.boolean_value
+        self.integer_value = source_feature_state_value.integer_value
+        self.string_value = source_feature_state_value.string_value
+        self.save()
 
     def get_update_log_message(self, history_instance) -> typing.Optional[str]:
         fs = self.feature_state

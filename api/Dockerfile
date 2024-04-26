@@ -1,19 +1,24 @@
 
 # Step 1 - Build Python virtualenv
-FROM python:3.11 as build-python
+FROM python:3.12 as build-python
 WORKDIR /app
 
-COPY pyproject.toml poetry.lock Makefile ./
+COPY api/pyproject.toml api/poetry.lock api/Makefile ./
 
 ARG POETRY_VIRTUALENVS_CREATE=false
 RUN make install-poetry
 ENV PATH="$PATH:/root/.local/bin"
 
+ARG GH_TOKEN
+RUN if [ -n "${GH_TOKEN}" ]; \
+  then echo "https://${GH_TOKEN}:@github.com" > ${HOME}/.git-credentials \
+  && git config --global credential.helper store; fi;
+
 ARG POETRY_OPTS
 RUN make install-packages opts="${POETRY_OPTS}"
 
 # Step 2 - Build Django Application
-FROM python:3.11-slim as application
+FROM python:3.12-slim as application
 WORKDIR /app
 
 # Install SAML dependency if required
@@ -24,12 +29,20 @@ RUN if [ "${SAML_INSTALLED}" = "1" ]; then apt-get update && apt-get install -y 
 ARG TARGETARCH
 RUN if [ "${TARGETARCH}" != "amd64" ]; then apt-get update && apt-get install -y libpq-dev && rm -rf /var/lib/apt/lists/*; fi;
 
+# Install GnuPG(and import private key) if secret file exists
+RUN --mount=type=secret,id=sse_pgp_pkey  if [ -f /run/secrets/sse_pgp_pkey ]; then \
+  apt-get update && apt-get install -y gnupg && gpg --import  /run/secrets/sse_pgp_pkey; \
+  mv /root/.gnupg /app/; \
+  chown -R nobody /app/.gnupg ;  fi;
+
+
 # Copy the python venv from step 2
-COPY --from=build-python /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=build-python /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 # Copy the bin folder as well to copy the executables created in package installation
 COPY --from=build-python /usr/local/bin /usr/local/bin
 
-COPY . .
+COPY api/ .
+COPY .release-please-manifest.json ./.versions.json
 
 # Compile static Django assets
 RUN python manage.py collectstatic --no-input

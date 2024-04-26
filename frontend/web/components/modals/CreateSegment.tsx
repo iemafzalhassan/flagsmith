@@ -35,6 +35,10 @@ import ConfigProvider from 'common/providers/ConfigProvider'
 import JSONReference from 'components/JSONReference'
 import { cloneDeep } from 'lodash'
 import ErrorMessage from 'components/ErrorMessage'
+import ProjectStore from 'common/stores/project-store'
+import Icon from 'components/Icon'
+import Permission from 'common/providers/Permission'
+import classNames from 'classnames'
 
 type PageType = {
   number: number
@@ -43,6 +47,7 @@ type PageType = {
 }
 
 type CreateSegmentType = {
+  className?: string
   projectId: number | string
   searchInput: string
   environmentId: string
@@ -64,6 +69,7 @@ type CreateSegmentType = {
 
 let _operators: Operator[] | null = null
 const CreateSegment: FC<CreateSegmentType> = ({
+  className,
   condensed,
   environmentId,
   feature,
@@ -94,13 +100,7 @@ const CreateSegment: FC<CreateSegmentType> = ({
     rules: [
       {
         conditions: [],
-        rules: [
-          {
-            conditions: [{ ...Constants.defaultRule }],
-            rules: [],
-            type: 'ANY',
-          },
-        ],
+        rules: [],
         type: 'ALL',
       },
     ],
@@ -110,7 +110,7 @@ const CreateSegment: FC<CreateSegmentType> = ({
     createSegment,
     {
       data: createSegmentData,
-      isError: createError,
+      error: createError,
       isLoading: creating,
       isSuccess: createSuccess,
     },
@@ -119,7 +119,7 @@ const CreateSegment: FC<CreateSegmentType> = ({
     editSegment,
     {
       data: updateSegmentData,
-      isError: updateError,
+      error: updateError,
       isLoading: updating,
       isSuccess: updateSuccess,
     },
@@ -132,7 +132,16 @@ const CreateSegment: FC<CreateSegmentType> = ({
   const [rules, setRules] = useState<Segment['rules']>(segment.rules)
   const [tab, setTab] = useState(0)
 
-  const isError = createError || updateError
+  const error = createError || updateError
+  const isLimitReached =
+    ProjectStore.getTotalSegments() >= ProjectStore.getMaxSegmentsAllowed()
+
+  const THRESHOLD = 90
+  const segmentsLimitAlert = Utils.calculateRemainingLimitsPercentage(
+    ProjectStore.getTotalSegments(),
+    ProjectStore.getMaxSegmentsAllowed(),
+    THRESHOLD,
+  )
 
   const addRule = (type = 'ANY') => {
     const newRules = cloneDeep(rules)
@@ -250,36 +259,51 @@ const CreateSegment: FC<CreateSegmentType> = ({
     }
     return warnings
   }, [operators, rules])
+  //Find any non-deleted rules
+  const hasNoRules = !rules[0]?.rules?.find((v) => !v.delete)
+
   const rulesEl = (
     <div className='overflow-visible'>
       <div>
         <div className='mb-4'>
-          {rules[0].rules.map((rule, i) => {
-            if (rule.delete) {
-              return null
-            }
-            return (
-              <div key={i}>
-                {i > 0 && (
-                  <Row className='and-divider my-1'>
+          {rules[0].rules
+            ?.filter((v) => !v?.delete)
+            .map((rule, i) => {
+              return (
+                <div key={i}>
+                  <Row
+                    className={classNames('and-divider my-1', {
+                      'text-danger': rule.type !== 'ANY',
+                    })}
+                  >
                     <Flex className='and-divider__line' />
-                    {rule.type === 'ANY' ? 'AND' : 'AND NOT'}
+                    {Format.camelCase(
+                      `${i > 0 ? 'And ' : ''}${
+                        rule.type === 'ANY'
+                          ? 'Any of the following'
+                          : 'None of the following'
+                      }`,
+                    )}
                     <Flex className='and-divider__line' />
                   </Row>
-                )}
-                <Rule
-                  showDescription={showDescriptions}
-                  readOnly={readOnly}
-                  data-test={`rule-${i}`}
-                  rule={rule}
-                  operators={operators}
-                  onRemove={() => removeRule(0, i)}
-                  onChange={(v: SegmentRule) => updateRule(0, i, v)}
-                />
-              </div>
-            )
-          })}
+                  <Rule
+                    showDescription={showDescriptions}
+                    readOnly={readOnly}
+                    data-test={`rule-${i}`}
+                    rule={rule}
+                    operators={operators}
+                    onRemove={() => removeRule(0, i)}
+                    onChange={(v: SegmentRule) => updateRule(0, i, v)}
+                  />
+                </div>
+              )
+            })}
         </div>
+        {hasNoRules && (
+          <InfoMessage>
+            Add at least one AND/NOT rule to create a segment.
+          </InfoMessage>
+        )}
         <Row className='justify-content-end'>
           {!readOnly && (
             <div onClick={() => addRule('ANY')} className='text-center'>
@@ -289,34 +313,15 @@ const CreateSegment: FC<CreateSegmentType> = ({
             </div>
           )}
           {!readOnly && Utils.getFlagsmithHasFeature('not_operator') && (
-            <div onClick={() => addRule('NOT')} className='text-center'>
-              {Utils.getFlagsmithValue('not_operator') ? (
-                <Tooltip
-                  title={
-                    <Button
-                      theme='outline'
-                      className='ml-2 btn--outline-danger'
-                      data-test='add-rule'
-                      type='button'
-                    >
-                      Add AND NOT Condition
-                    </Button>
-                  }
-                >
-                  {`Note: If using clientside evaluations on your SDK, this feature is only supported by the following SDKs: ${JSON.parse(
-                    Utils.getFlagsmithValue('not_operator'),
-                  )}`}
-                </Tooltip>
-              ) : (
-                <Button
-                  theme='outline'
-                  className='ml-2 btn--outline-danger'
-                  data-test='add-rule'
-                  type='button'
-                >
-                  Add AND NOT Condition
-                </Button>
-              )}
+            <div onClick={() => addRule('NONE')} className='text-center'>
+              <Button
+                theme='outline'
+                className='ml-2 btn--outline-danger'
+                data-test='add-rule'
+                type='button'
+              >
+                Add AND NOT Condition
+              </Button>
             </div>
           )}
         </Row>
@@ -330,11 +335,13 @@ const CreateSegment: FC<CreateSegmentType> = ({
         <div className='mt-3'>
           <InfoMessage>
             Learn more about rule and trait value type conversions{' '}
-            <a href='https://docs-git-improvement-segment-rule-value-typing-flagsmith.vercel.app/basic-features/managing-segments#rule-typing'>
+            <a href='https://docs.flagsmith.com/basic-features/managing-segments#rule-typing'>
               here
             </a>
             .
           </InfoMessage>
+          {segmentsLimitAlert.percentage &&
+            Utils.displayLimitAlert('segments', segmentsLimitAlert.percentage)}
         </div>
       )}
 
@@ -364,7 +371,6 @@ const CreateSegment: FC<CreateSegmentType> = ({
           </Flex>
         </div>
       )}
-
       {!condensed && (
         <InputGroup
           className='mb-3'
@@ -404,7 +410,7 @@ const CreateSegment: FC<CreateSegmentType> = ({
         </Row>
         <Flex className='mb-3'>
           <label className='cols-sm-2 control-label mb-1'>
-            Include users when the following rules apply:
+            Include users when all of the following rules apply:
           </label>
           <span className='fs-caption text-faint'>
             Note: Trait names are case sensitive
@@ -418,17 +424,11 @@ const CreateSegment: FC<CreateSegmentType> = ({
         {rulesEl}
       </div>
 
-      {isError && (
-        <ErrorMessage
-          error='Error creating segment, please ensure you have entered a trait and
-          value for each rule.'
-        />
-      )}
+      <ErrorMessage error={error} />
       {isEdit && <JSONReference title={'Segment'} json={segment} />}
       {readOnly ? (
         <div className='text-right'>
           <Tooltip
-            html
             title={
               <Button
                 disabled
@@ -467,7 +467,7 @@ const CreateSegment: FC<CreateSegmentType> = ({
               </Button>
             ) : (
               <Button
-                disabled={isSaving || !name || !isValid}
+                disabled={isSaving || !name || !isValid || isLimitReached}
                 type='submit'
                 data-test='create-segment'
                 id='create-feature-btn'
@@ -490,11 +490,23 @@ const CreateSegment: FC<CreateSegmentType> = ({
           </TabItem>
           <TabItem tabLabel='Features'>
             <div className='my-4'>
-              <AssociatedSegmentOverrides
-                feature={segment.feature}
-                projectId={projectId}
-                id={segment.id}
-              />
+              <Permission
+                level='environment'
+                permission={'MANAGE_SEGMENT_OVERRIDES'}
+                id={environmentId}
+              >
+                {({ permission: manageSegmentOverrides }) => {
+                  const isReadOnly = !manageSegmentOverrides
+                  return (
+                    <AssociatedSegmentOverrides
+                      feature={segment.feature}
+                      projectId={projectId}
+                      id={segment.id}
+                      readOnly={isReadOnly}
+                    />
+                  )
+                }}
+              </Permission>
             </div>
           </TabItem>
           <TabItem tabLabel='Users'>
@@ -584,17 +596,35 @@ const CreateSegment: FC<CreateSegmentType> = ({
                                 <div className='font-weight-medium'>
                                   {identifier}
                                 </div>
-                                <div
-                                  className={`${
-                                    inSegment
-                                      ? 'font-weight-medium text-primary'
-                                      : 'text-muted fs-small lh-sm'
+                                <Row
+                                  className={`font-weight-medium fs-small lh-sm ${
+                                    inSegment ? 'text-primary' : 'faint'
                                   }`}
                                 >
-                                  {inSegment
-                                    ? 'User in segment'
-                                    : 'Not in segment'}
-                                </div>
+                                  {inSegment ? (
+                                    <>
+                                      <Icon
+                                        name='checkmark-circle'
+                                        width={20}
+                                        fill='#6837FC'
+                                      />
+                                      <span className='ml-1'>
+                                        User in segment
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Icon
+                                        name='minus-circle'
+                                        width={20}
+                                        fill='#9DA4AE'
+                                      />
+                                      <span className='ml-1'>
+                                        Not in segment
+                                      </span>
+                                    </>
+                                  )}
+                                </Row>
                               </Row>
                             )
                           }}
@@ -613,7 +643,7 @@ const CreateSegment: FC<CreateSegmentType> = ({
           </TabItem>
         </Tabs>
       ) : (
-        <div className='my-3 mx-4'>{Tab1}</div>
+        <div className={className || 'my-3 mx-4'}>{Tab1}</div>
       )}
     </>
   )

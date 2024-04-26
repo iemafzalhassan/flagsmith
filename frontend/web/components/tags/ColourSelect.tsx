@@ -20,12 +20,12 @@ const ColourSelect: FC<ColourSelectType> = ({ onChange, value: _value }) => {
         title='Select a colour'
         isOpen={isOpen}
         onClose={() => setIsOpen(false)}
-        className='inline-modal--tags'
+        className='inline-modal--sm'
       >
         <div>
-          <Row className='mb-2'>
+          <Row className='mb-2 gap-4'>
             {Constants.tagColors.map((color) => (
-              <div key={color} className='tag--select mr-2 mb-2'>
+              <div key={color} className='tag--select'>
                 <Tag
                   onClick={(tag) => {
                     onChange(tag.color)

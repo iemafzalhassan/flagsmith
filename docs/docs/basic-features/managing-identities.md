@@ -27,7 +27,7 @@ unintentionally leaking Identity trait data.
 
 ## Identity Overrides
 
-Once you have uniquely identified a user, you can then override features for that user from your environment defaults.
+Once you have uniquely identified a user, you can then override features for that user from your Environment defaults.
 For example, you've pushed a feature into production, but the relevant feature flag is still hiding that feature to all
 of your users. You can now override that flag for your own user, and test that feature. Once you are happy with
 everything, you can roll that feature out to all of your users by enabling the flag itself.
@@ -76,6 +76,19 @@ version.
 Traits are completely free-form. You can store any number of traits, with any relevant information you see fit, in the
 platform and then use Segments to control features based on these Trait values.
 
+## Identity and Trait Storage
+
+Identities are persisted within the Flagsmith platform, along with any Traits that have been assigned to them. When
+Flags are evaluated for an Identity, the full complement of Traits stored within the platform are used, even if they
+were not all sent as part of the request.
+
+This can be useful if, at runtime, your application does not have all the relevant Trait data available for that
+particular Identity; any Traits provided will be combined with the Traits stored within Flagsmith before the evaluation
+engine runs.
+
+There are some [exceptions to this rule](/clients/overview#server-side-sdks) with Server Side SDKs running in local
+evaluation mode.
+
 ### Using Traits as a data-store
 
 Traits can also be used to store additional data about your users that would be cumbersome to store within your
@@ -89,14 +102,18 @@ Flagsmith rather than in your core application.
 
 Traits are stored natively as either numbers, strings or booleans.
 
-![Image](/img/identity-details.png)
-
 ## Traits powering Segments
 
 Traits can be used within your application, but they can also be used to power
 [Segments](/basic-features/managing-segments.md).
 
 ## Trait Value Data Types
+
+:::tip
+
+You can remove a trait by sending `null` as the trait value.
+
+:::
 
 Trait values can be stored as one of four different data types:
 
@@ -111,23 +128,5 @@ type conversion within the SDK.
 ## Bulk Uploading Identities and Traits
 
 Identities are lazily created within Flagsmith. There might be instances where you want to push Identity and Trait data
-into the platform outside of a user session. You can achieve this with a `POST` to the `identities` endpoint:
-
-```bash
-curl -X "POST" "https://edge.api.flagsmith.com/api/v1/identities/?identifier=<identity_id>" \
-     -H 'X-Environment-Key: <Your Environment Key>' \
-     -H 'Content-Type: application/json; charset=utf-8' \
-     -d $'{
-  "traits":   "traits": [
-    {
-      "trait_key": "this_key",
-      "trait_value": "this_value"
-    },
-    {
-      "trait_key": "this_key2",
-      "trait_value": "this_value2"
-    }
-  ],
-  "identifier": "<identity_id>"
-}'
-```
+into the platform outside of a user session. We have a
+[code example for this](/clients/rest#bulk-uploading-identities-and-traits).
