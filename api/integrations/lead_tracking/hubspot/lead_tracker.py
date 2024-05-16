@@ -42,12 +42,6 @@ class HubspotLeadTracker(LeadTracker):
         ):
             return False
 
-        if any(
-            org.is_paid
-            for org in user.organisations.select_related("subscription").all()
-        ):
-            return False
-
         return True
 
     def create_lead(self, user: FFAdminUser, organisation: Organisation = None) -> None:
@@ -119,7 +113,10 @@ class HubspotLeadTracker(LeadTracker):
     def _get_or_create_company_by_domain(self, domain: str) -> dict:
         company = self.client.get_company_by_domain(domain)
         if not company:
-            company = self.client.create_company(name=domain)
+            # Since we don't know the company's name, we pass the domain as
+            # both the name and the domain. This can then be manually
+            # updated in Hubspot if needed.
+            company = self.client.create_company(name=domain, domain=domain)
 
         return company
 

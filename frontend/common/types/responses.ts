@@ -4,6 +4,13 @@ export type EdgePagedResponse<T> = PagedResponse<T> & {
   last_evaluated_key?: string
   pages?: (string | undefined)[]
 }
+export type Approval =
+  | {
+      user: number
+    }
+  | {
+      group: number
+    }
 export type PagedResponse<T> = {
   count?: number
   next?: string
@@ -61,6 +68,7 @@ export type Segment = {
   description: string
   project: string | number
   feature?: number
+  metadata: Metadata[] | []
 }
 export type Environment = {
   id: number
@@ -75,6 +83,7 @@ export type Environment = {
   hide_sensitive_data: boolean
   total_segment_overrides?: number
   use_v2_feature_versioning: boolean
+  metadata: Metadata[] | []
 }
 export type Project = {
   id: number
@@ -316,6 +325,7 @@ export type githubIntegration = {
 export type User = {
   id: number
   email: string
+  last_login?: string
   first_name: string
   last_name: string
   role: 'ADMIN' | 'USER'
@@ -467,6 +477,7 @@ export type IdentityFeatureState = {
   enabled: boolean
   feature_state_value: FlagsmithValue
   segment: null
+  overridden_by: string | null
   multivariate_feature_state_values?: {
     multivariate_feature_option: {
       value: number
@@ -487,7 +498,6 @@ export type FeatureState = {
   environment_feature_version: string
   version?: number
   live_from?: string
-  hide_from_client?: string
   feature: number
   environment: number
   feature_segment?: {
@@ -497,6 +507,8 @@ export type FeatureState = {
     uuid: string
   }
   change_request?: number
+  //Added by FE
+  toRemove?: boolean
 }
 
 export type ProjectFlag = {
@@ -513,6 +525,7 @@ export type ProjectFlag = {
   num_segment_overrides: number | null
   owners: User[]
   owner_groups: UserGroupSummary[]
+  metadata: Metadata[] | []
   project: number
   tags: number[]
   type: string
@@ -546,6 +559,7 @@ export type Invite = {
   email: string
   date_created: string
   invited_by: User
+  link: string
   permission_groups: number[]
 }
 
@@ -593,6 +607,31 @@ export type RolePermissionGroup = {
   id: number
   role_name: string
 }
+export type ChangeRequest = {
+  id: number
+  created_at: string
+  updated_at: string
+  environment: number
+  title: string
+  description: string | number
+  feature_states: FeatureState[]
+  user: number
+  committed_at: number | null
+  committed_by: number | null
+  deleted_at: null
+  approvals: {
+    id: number
+    user: number
+    approved_at: null | string
+  }[]
+  is_approved: boolean
+  is_committed: boolean
+  group_assignments: { group: number }[]
+  environment_feature_versions: {
+    uuid: string
+    feature_states: FeatureState[]
+  }[]
+}
 export type FeatureVersion = {
   created_at: string
   updated_at: string
@@ -603,6 +642,40 @@ export type FeatureVersion = {
   published_by: number | null
   created_by: number | null
 }
+
+export type Metadata = {
+  id?: number
+  model_field: number | string
+  field_value: string
+}
+
+export type MetadataField = {
+  id: number
+  name: string
+  type: string
+  description: string
+  organisation: number
+}
+
+export type ContentType = {
+  [key: string]: any
+  id: number
+  app_label: string
+  model: string
+}
+
+export type isRequiredFor = {
+  content_type: number
+  object_id: number
+}
+
+export type MetadataModelField = {
+  id: string
+  field: number
+  content_type: number | string
+  is_required_for: isRequiredFor[]
+}
+
 export type Res = {
   segments: PagedResponse<Segment>
   segment: Segment
@@ -670,13 +743,17 @@ export type Res = {
   rolePermission: PagedResponse<UserPermission>
   projectFlags: PagedResponse<ProjectFlag>
   projectFlag: ProjectFlag
-  identityFeatureStates: IdentityFeatureState[]
+  identityFeatureStatesAll: IdentityFeatureState[]
   createRolesPermissionUsers: RolePermissionUser
   rolesPermissionUsers: PagedResponse<RolePermissionUser>
   createRolePermissionGroup: RolePermissionGroup
   rolePermissionGroup: PagedResponse<RolePermissionGroup>
   getSubscriptionMetadata: { id: string }
   environment: Environment
+  metadataModelFieldList: PagedResponse<MetadataModelField>
+  metadataModelField: MetadataModelField
+  metadataList: PagedResponse<MetadataField>
+  metadataField: MetadataField
   launchDarklyProjectImport: LaunchDarklyProjectImport
   launchDarklyProjectsImport: LaunchDarklyProjectImport[]
   roleMasterApiKey: { id: number; master_api_key: string; role: number }
@@ -689,6 +766,7 @@ export type Res = {
   groupWithRole: PagedResponse<Role>
   changeRequests: PagedResponse<ChangeRequestSummary>
   groupSummaries: UserGroupSummary[]
+  supportedContentType: ContentType[]
   externalResource: PagedResponse<ExternalResource>
   githubIntegrations: PagedResponse<githubIntegration>
   githubRepository: PagedResponse<GithubRepository> | { data: { id: string } }
@@ -696,7 +774,7 @@ export type Res = {
   githubPulls: PullRequest[]
   githubRepos: GithubPaginatedRepos<Repository>
   segmentPriorities: {}
-  featureSegment: { id: string }
+  featureSegment: FeatureState['feature_segment']
   featureVersions: PagedResponse<FeatureVersion>
   users: User[]
   enableFeatureVersioning: { id: string }
@@ -707,5 +785,8 @@ export type Res = {
   featureImports: PagedResponse<FeatureImport>
   serversideEnvironmentKeys: APIKey[]
   userGroupPermissions: GroupPermission[]
+  identityFeatureStates: PagedResponse<FeatureState>
+  cloneidentityFeatureStates: IdentityFeatureState
+  featureStates: PagedResponse<FeatureState>
   // END OF TYPES
 }

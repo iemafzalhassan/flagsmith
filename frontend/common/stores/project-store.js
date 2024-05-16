@@ -91,11 +91,17 @@ const controller = {
     data.put(`${Project.api}projects/${project.id}/`, project).then((res) => {
       store.model = Object.assign(store.model, res)
       getStore().dispatch(projectService.util.invalidateTags(['Project']))
+      AppActions.refreshOrganisation()
       store.saved()
     })
   },
   getProject: (id, cb, force) => {
-    if (force) {
+    if (!id) {
+      if (!getIsWidget()) {
+        !force && AsyncStorage.removeItem('lastEnv')
+        document.location.href = '/404'
+      }
+    } else if (force) {
       store.loading()
 
       return Promise.all([

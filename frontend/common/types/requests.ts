@@ -4,8 +4,13 @@ import {
   FeatureState,
   FeatureStateValue,
   ImportStrategy,
+  APIKey,
+  Approval,
+  MultivariateOption,
   Segment,
   Tag,
+  ProjectFlag,
+  Environment,
   UserGroup,
 } from './responses'
 
@@ -17,7 +22,7 @@ export type PagedRequest<T> = T & {
 export type OAuthType = 'github' | 'saml' | 'google'
 export type PermissionLevel = 'organisation' | 'project' | 'environment'
 export type CreateVersionFeatureState = {
-  environmentId: string
+  environmentId: number
   featureId: number
   sha: string
   featureState: FeatureState
@@ -30,7 +35,10 @@ export type Req = {
     include_feature_specific?: boolean
   }>
   deleteSegment: { projectId: number | string; id: number }
-  updateSegment: { projectId: number | string; segment: Segment }
+  updateSegment: {
+    projectId: number | string
+    segment: Segment
+  }
   createSegment: {
     projectId: number | string
     segment: Omit<Segment, 'id' | 'uuid' | 'project'>
@@ -159,7 +167,7 @@ export type Req = {
   updateRolePermission: Req['createRolePermission'] & { id: number }
   deleteRolePermission: { organisation_id: number; role_id: number }
 
-  getIdentityFeatureStates: {
+  getIdentityFeatureStatesAll: {
     environment: string
     user: string
   }
@@ -169,7 +177,7 @@ export type Req = {
     tags?: string[]
     is_archived?: boolean
   }
-  getProjectFlag: { project: string; id: string }
+  getProjectFlag: { project: string | number; id: string }
   getRolesPermissionUsers: { organisation_id: number; role_id: number }
   deleteRolesPermissionUsers: {
     organisation_id: number
@@ -204,6 +212,49 @@ export type Req = {
   getGetSubscriptionMetadata: { id: string }
   getEnvironment: { id: string }
   getSubscriptionMetadata: { id: string }
+  getMetadataModelFields: { organisation_id: string }
+  getMetadataModelField: { organisation_id: string; id: string }
+  updateMetadataModelField: {
+    organisation_id: string
+    id: string
+    body: {
+      content_type: number
+      field: number
+      is_required_for: {
+        content_type: number
+        object_id: number
+      }[]
+    }
+  }
+  deleteMetadataModelField: { organisation_id: string; id: string | number }
+  createMetadataModelField: {
+    organisation_id: string
+    body: {
+      content_type: number | string
+      field: string | number
+    }
+  }
+  getMetadataField: { organisation_id: string }
+  getMetadataList: { organisation: string }
+  updateMetadataField: {
+    id: string
+    body: {
+      name: string
+      type: string
+      description: string
+      organisation: string
+    }
+  }
+  deleteMetadataField: { id: string }
+  createMetadataField: {
+    body: {
+      description: string
+      name: string
+      organisation: string
+      type: string
+    }
+  }
+
   getRoleMasterApiKey: { org_id: number; role_id: number; id: string }
   updateRoleMasterApiKey: { org_id: number; role_id: number; id: string }
   deleteRoleMasterApiKey: { org_id: number; role_id: number; id: string }
@@ -247,18 +298,27 @@ export type Req = {
   getGroupWithRole: { org_id: number; group_id: number }
   deleteGroupWithRole: { org_id: number; group_id: number; role_id: number }
   createAndSetFeatureVersion: {
-    environmentId: string
+    environmentId: number
     featureId: number
     skipPublish?: boolean
-    featureStates: (FeatureState & { toRemove: boolean })[]
+    featureStates: Pick<
+      FeatureState,
+      | 'enabled'
+      | 'feature_segment'
+      | 'uuid'
+      | 'feature_state_value'
+      | 'id'
+      | 'toRemove'
+      | 'multivariate_feature_state_values'
+    >[]
   }
   createFeatureVersion: {
-    environmentId: string
+    environmentId: number
     featureId: number
   }
   publishFeatureVersion: {
     sha: string
-    environmentId: string
+    environmentId: number
     featureId: number
   }
   createVersionFeatureState: CreateVersionFeatureState
@@ -269,7 +329,7 @@ export type Req = {
   }
   getVersionFeatureState: {
     sha: string
-    environmentId: string
+    environmentId: number
     featureId: number
   }
   updateSegmentPriorities: { id: number; priority: number }[]
@@ -298,6 +358,7 @@ export type Req = {
   getGroupSummaries: {
     orgId: string
   }
+  getSupportedContentType: { organisation_id: string }
   getExternalResources: { project_id: string; feature_id: string }
   deleteExternalResource: {
     project_id: string
@@ -380,6 +441,24 @@ export type Req = {
     usersToAddAdmin: number[] | null
   }
   getUserGroupPermission: { project_id: string }
+  updateProjectFlag: {
+    project_id: string | number
+    feature_id: string | number
+    body: ProjectFlag
+  }
+  createProjectFlag: {
+    project_id: string | number
+    body: ProjectFlag
+  }
+  updateEnvironment: { id: string; body: Environment }
+  createCloneIdentityFeatureStates: {
+    environment_id: string
+    identity_id: string
+    body: {
+      source_identity_id?: string
+      source_identity_uuid?: string
+    }
+  }
   updateGroup: Req['createGroup'] & {
     orgId: string
     data: UserGroup
@@ -389,5 +468,17 @@ export type Req = {
     usersToRemoveAdmin: number[] | null
     usersToRemove: number[] | null
   }
+  createChangeRequest: {
+    approvals: Approval[]
+    live_from: string | undefined
+    description: string
+    multivariate_options: MultivariateOption[]
+    title: string
+  }
+  getFeatureStates: {
+    environment?: number
+    feature?: number
+  }
+  getFeatureSegment: { id: string }
   // END OF TYPES
 }

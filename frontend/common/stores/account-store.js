@@ -1,3 +1,5 @@
+import { matchPath } from 'react-router'
+
 const Dispatcher = require('../dispatcher/dispatcher')
 const BaseStore = require('./base/_store')
 const data = require('../data/base/_data')
@@ -52,7 +54,7 @@ const controller = {
 
         store.saved()
         if (isLoginPage) {
-          window.location.href = `/organisation-settings`
+          window.location.href = `/organisations`
         }
       })
       .catch((e) => {
@@ -93,6 +95,7 @@ const controller = {
       const relayEventKey = Utils.getFlagsmithValue('relay_events_key')
       const sendRelayEvent =
         Utils.getFlagsmithHasFeature('relay_events_key') && !!relayEventKey
+      window.lintrk?.('track', { conversion_id: 16798338 })
       if (sendRelayEvent) {
         dataRelay.sendEvent(AccountStore.getUser(), {
           apiKey: relayEventKey,
@@ -277,6 +280,7 @@ const controller = {
   },
 
   selectOrganisation: (id) => {
+    API.setCookie('organisation', `${id}`)
     store.organisation = _.find(store.model.organisations, { id })
     store.changed()
   },
@@ -299,12 +303,18 @@ const controller = {
       if (user && user.organisations) {
         store.organisation = user.organisations[0]
         const cookiedID = API.getCookie('organisation')
-        if (cookiedID) {
+        const pathID = matchPath(document.location.pathname, {
+          path: '/organisation/:organisationId',
+          strict: false,
+        })?.params?.organisationId
+        const orgId = parseInt(pathID || cookiedID) || undefined
+        if (orgId) {
           const foundOrganisation = user.organisations.find(
-            (v) => `${v.id}` === cookiedID,
+            (v) => v.id === orgId,
           )
           if (foundOrganisation) {
             store.organisation = foundOrganisation
+            AppActions.getOrganisation(orgId)
           }
         }
       }
@@ -362,6 +372,7 @@ const controller = {
           store.model.organisations[idx] = res
           try {
             if (res && res.subscription && res.subscription.plan) {
+              API.trackEvent(Constants.events.UPGRADE(res.subscription.plan))
               API.postEvent(res.subscription.plan, 'chargebee')
             }
           } catch (e) {}
@@ -386,7 +397,6 @@ const store = Object.assign({}, BaseStore, {
     }
 
     return (
-      Utils.getFlagsmithHasFeature('force_2fa') &&
       store.getOrganisations() &&
       store.getOrganisations().find((o) => o.force_2fa)
     )

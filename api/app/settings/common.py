@@ -485,6 +485,7 @@ if EMAIL_BACKEND == "django.core.mail.backends.smtp.EmailBackend":
     EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
 
 SWAGGER_SETTINGS = {
+    "DEEP_LINKING": True,
     "DEFAULT_AUTO_SCHEMA_CLASS": "api.openapi.PydanticResponseCapableSwaggerAutoSchema",
     "SHOW_REQUEST_HEADERS": True,
     "SECURITY_DEFINITIONS": {
@@ -874,9 +875,9 @@ DISABLE_ANALYTICS_FEATURES = env.bool(
 FLAGSMITH_ANALYTICS = env.bool("FLAGSMITH_ANALYTICS", default=False)
 FLAGSMITH_ON_FLAGSMITH_API_URL = env("FLAGSMITH_ON_FLAGSMITH_API_URL", default=None)
 FLAGSMITH_ON_FLAGSMITH_API_KEY = env("FLAGSMITH_ON_FLAGSMITH_API_KEY", default=None)
+LINKEDIN_PARTNER_TRACKING = env("LINKEDIN_PARTNER_TRACKING", default=False)
 GOOGLE_ANALYTICS_API_KEY = env("GOOGLE_ANALYTICS_API_KEY", default=None)
 HEADWAY_API_KEY = env("HEADWAY_API_KEY", default=None)
-LINKEDIN_API_KEY = env("LINKEDIN_API_KEY", default=None)
 CRISP_CHAT_API_KEY = env("CRISP_CHAT_API_KEY", default=None)
 MIXPANEL_API_KEY = env("MIXPANEL_API_KEY", default=None)
 SENTRY_API_KEY = env("SENTRY_API_KEY", default=None)
@@ -893,7 +894,7 @@ SLACK_CLIENT_SECRET = env.str("SLACK_CLIENT_SECRET", default="")
 # GitHub integrations
 GITHUB_PEM = env.str("GITHUB_PEM", default="")
 GITHUB_APP_ID: int = env.int("GITHUB_APP_ID", default=0)
-
+GITHUB_WEBHOOK_SECRET = env.str("GITHUB_WEBHOOK_SECRET", default="")
 
 # MailerLite
 MAILERLITE_BASE_URL = env.str(
@@ -1095,6 +1096,12 @@ FLAGSMITH_ON_FLAGSMITH_FEATURE_EXPORT_TAG_ID = env.int(
     default=None,
 )
 
+# The URL used to install the GitHub integration
+GITHUB_APP_URL = env.int(
+    "GITHUB_APP_URL",
+    default=None,
+)
+
 # LDAP setting
 LDAP_INSTALLED = importlib.util.find_spec("flagsmith_ldap")
 # The URL of the LDAP server.
@@ -1191,3 +1198,19 @@ if SPLIT_TESTING_INSTALLED:
     INSTALLED_APPS += ("split_testing",)
 
 ENABLE_API_USAGE_ALERTING = env.bool("ENABLE_API_USAGE_ALERTING", default=False)
+
+# See DomainAuthMethods in flagsmith-auth-controller repository with auth_controller.models module
+GLOBAL_DOMAIN_AUTH_METHODS = env.dict(
+    "GLOBAL_DOMAIN_AUTH_METHODS",
+    {
+        "EP": True,  # Email / Password
+        "GO": True,  # Google
+        "GH": True,  # GitHub
+        "SAML": True,  # Security Assertion Markup Language
+    },
+)
+
+EDGE_V2_MIGRATION_READ_CAPACITY_BUDGET = env.int(
+    "EDGE_V2_MIGRATION_READ_CAPACITY_BUDGET",
+    default=0,
+)

@@ -13,6 +13,7 @@ from mypy_boto3_dynamodb.service_resource import DynamoDBServiceResource, Table
 from pytest_django.plugin import blocking_manager_key
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
+from urllib3.connectionpool import HTTPConnectionPool
 from xdist import get_xdist_worker_id
 
 from api_keys.models import MasterAPIKey
@@ -62,6 +63,7 @@ from projects.permissions import VIEW_PROJECT
 from projects.tags.models import Tag
 from segments.models import Condition, Segment, SegmentRule
 from task_processor.task_run_method import TaskRunMethod
+from tests.test_helpers import fix_issue_3869
 from tests.types import (
     WithEnvironmentPermissionsCallable,
     WithOrganisationPermissionsCallable,
@@ -77,6 +79,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Enable CI mode",
     )
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    fix_issue_3869()
 
 
 @pytest.hookimpl(trylast=True)
@@ -115,6 +121,38 @@ def django_db_setup(request: pytest.FixtureRequest) -> None:
         db_settings["NAME"] = test_db_name
 
 
+@pytest.fixture(autouse=True)
+def restrict_http_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    This fixture prevents all tests from performing HTTP requests to
+    any host than `localhost`.
+
+    Any external request attempt leads to `RuntimeError` with a helpful message
+    pointing developers to the `responses` fixture.
+    """
+    allowed_hosts = {"localhost"}
+    original_urlopen = HTTPConnectionPool.urlopen
+
+    def urlopen_mock(
+        self,
+        method: str,
+        url: str,
+        *args,
+        **kwargs,
+    ) -> HTTPConnectionPool.ResponseCls:
+        if self.host in allowed_hosts:
+            return original_urlopen(self, method, url, *args, **kwargs)
+
+        raise RuntimeError(
+            f"Blocked {method} request to {self.scheme}://{self.host}{url}. "
+            "Use `responses` fixture to mock the response!"
+        )
+
+    monkeypatch.setattr(
+        "urllib3.connectionpool.HTTPConnectionPool.urlopen", urlopen_mock
+    )
+
+
 trait_key = "key1"
 trait_value = "value1"
 
@@ -130,10 +168,30 @@ def auth_token(test_user):
 
 
 @pytest.fixture()
-def admin_client(admin_user):
+def admin_client_original(admin_user):
     client = APIClient()
     client.force_authenticate(user=admin_user)
     return client
+
+
+@pytest.fixture()
+def admin_client(admin_client_original):
+    """
+    This fixture will eventually be switched over to what is now
+    called admin_client_new which will run an admin client as well
+    as admin_master_api_key_client automatically.
+
+    In the meantime consider this fixture as deprecated. Use either
+    admin_client_original to preserve a singular admin client or
+    if the test suite can handle it, use admin_client_new to
+    automatically handling both query methods.
+
+    If a test must use pytest.mark.parametrize to differentiate
+    between other required parameters for a test then please
+    use admin_client_original as the parametrized version as this
+    fixture will ultimately be updated to the new approach.
+    """
+    yield admin_client_original
 
 
 @pytest.fixture()
@@ -278,13 +336,16 @@ def with_environment_permissions(
     """
 
     def _with_environment_permissions(
-        permission_keys: list[str], environment_id: int | None = None
+        permission_keys: list[str] | None = None,
+        environment_id: int | None = None,
+        admin: bool = False,
     ) -> UserEnvironmentPermission:
         environment_id = environment_id or environment.id
         uep, __ = UserEnvironmentPermission.objects.get_or_create(
-            environment_id=environment_id, user=staff_user
+            environment_id=environment_id, user=staff_user, defaults={"admin": admin}
         )
-        uep.permissions.add(*permission_keys)
+        if permission_keys:
+            uep.permissions.add(*permission_keys)
 
         return uep
 
@@ -324,7 +385,7 @@ def with_project_permissions(
     """
 
     def _with_project_permissions(
-        permission_keys: list[str] = None,
+        permission_keys: list[str] | None = None,
         project_id: typing.Optional[int] = None,
         admin: bool = False,
     ) -> UserProjectPermission:
@@ -344,6 +405,7 @@ def with_project_permissions(
 @pytest.fixture()
 def environment_v2_versioning(environment):
     enable_v2_versioning(environment.id)
+    environment.refresh_from_db()
     return environment
 
 
@@ -492,6 +554,29 @@ def segment_featurestate(feature_segment, feature, environment):
 
 
 @pytest.fixture()
+def feature_with_value_segment(
+    feature_with_value: Feature, segment: Segment, environment: Environment
+) -> FeatureSegment:
+    return FeatureSegment.objects.create(
+        feature=feature_with_value, segment=segment, environment=environment
+    )
+
+
+@pytest.fixture()
+def segment_featurestate_and_feature_with_value(
+    feature_with_value_segment: FeatureSegment,
+    feature_with_value: Feature,
+    environment: Environment,
+) -> FeatureState:
+    return FeatureState.objects.create(
+        feature_segment=feature_with_value_segment,
+        feature=feature_with_value,
+        environment=environment,
+        updated_at="2024-01-01 00:00:00",
+    )
+
+
+@pytest.fixture()
 def environment_api_key(environment):
     return EnvironmentAPIKey.objects.create(
         environment=environment, name="Test API Key"
@@ -597,23 +682,23 @@ def task_processor_synchronously(settings):
 
 
 @pytest.fixture()
-def a_metadata_field(organisation):
+def a_metadata_field(organisation: Organisation) -> MetadataField:
     return MetadataField.objects.create(name="a", type="int", organisation=organisation)
 
 
 @pytest.fixture()
-def b_metadata_field(organisation):
+def b_metadata_field(organisation: Organisation) -> MetadataField:
     return MetadataField.objects.create(name="b", type="str", organisation=organisation)
 
 
 @pytest.fixture()
 def required_a_environment_metadata_field(
-    organisation,
-    a_metadata_field,
-    environment,
-    project,
-    project_content_type,
-):
+    organisation: Organisation,
+    a_metadata_field: MetadataField,
+    environment: Environment,
+    project: Project,
+    project_content_type: ContentType,
+) -> MetadataModelField:
     environment_type = ContentType.objects.get_for_model(environment)
     model_field = MetadataModelField.objects.create(
         field=a_metadata_field,
@@ -627,7 +712,119 @@ def required_a_environment_metadata_field(
 
 
 @pytest.fixture()
-def optional_b_environment_metadata_field(organisation, b_metadata_field, environment):
+def required_a_feature_metadata_field(
+    organisation: Organisation,
+    a_metadata_field: MetadataField,
+    feature_content_type: ContentType,
+    project: Project,
+    project_content_type: ContentType,
+) -> MetadataModelField:
+    model_field = MetadataModelField.objects.create(
+        field=a_metadata_field,
+        content_type=feature_content_type,
+    )
+
+    MetadataModelFieldRequirement.objects.create(
+        content_type=project_content_type, object_id=project.id, model_field=model_field
+    )
+
+    return model_field
+
+
+@pytest.fixture()
+def required_a_feature_metadata_field_using_organisation_content_type(
+    organisation: Organisation,
+    a_metadata_field: MetadataField,
+    feature_content_type: ContentType,
+    project: Project,
+    organisation_content_type: ContentType,
+) -> MetadataModelField:
+    model_field = MetadataModelField.objects.create(
+        field=a_metadata_field,
+        content_type=feature_content_type,
+    )
+
+    MetadataModelFieldRequirement.objects.create(
+        content_type=organisation_content_type,
+        object_id=organisation.id,
+        model_field=model_field,
+    )
+
+    return model_field
+
+
+@pytest.fixture()
+def required_a_segment_metadata_field(
+    organisation: Organisation,
+    a_metadata_field: MetadataField,
+    segment_content_type: ContentType,
+    project: Project,
+    project_content_type: ContentType,
+) -> MetadataModelField:
+    model_field = MetadataModelField.objects.create(
+        field=a_metadata_field,
+        content_type=segment_content_type,
+    )
+
+    MetadataModelFieldRequirement.objects.create(
+        content_type=project_content_type, object_id=project.id, model_field=model_field
+    )
+
+    return model_field
+
+
+@pytest.fixture()
+def required_a_segment_metadata_field_using_organisation_content_type(
+    organisation: Organisation,
+    a_metadata_field: MetadataField,
+    segment_content_type: ContentType,
+    project: Project,
+    organisation_content_type: ContentType,
+) -> MetadataModelField:
+    model_field = MetadataModelField.objects.create(
+        field=a_metadata_field,
+        content_type=segment_content_type,
+    )
+
+    MetadataModelFieldRequirement.objects.create(
+        content_type=organisation_content_type,
+        object_id=organisation.id,
+        model_field=model_field,
+    )
+
+    return model_field
+
+
+@pytest.fixture()
+def optional_b_feature_metadata_field(
+    organisation: Organisation, b_metadata_field: MetadataField, feature: Feature
+) -> MetadataModelField:
+    feature_type = ContentType.objects.get_for_model(feature)
+
+    return MetadataModelField.objects.create(
+        field=b_metadata_field,
+        content_type=feature_type,
+    )
+
+
+@pytest.fixture()
+def optional_b_segment_metadata_field(
+    organisation: Organisation, b_metadata_field: MetadataField, segment: Segment
+) -> MetadataModelField:
+    segment_type = ContentType.objects.get_for_model(segment)
+
+    return MetadataModelField.objects.create(
+        field=b_metadata_field,
+        content_type=segment_type,
+    )
+
+
+@pytest.fixture()
+def optional_b_environment_metadata_field(
+    organisation: Organisation,
+    b_metadata_field: MetadataField,
+    environment: Environment,
+) -> MetadataModelField:
     environment_type = ContentType.objects.get_for_model(environment)
 
     return MetadataModelField.objects.create(
@@ -637,7 +834,10 @@ def optional_b_environment_metadata_field(organisation, b_metadata_field, enviro
 
 
 @pytest.fixture()
-def environment_metadata_a(environment, required_a_environment_metadata_field):
+def environment_metadata_a(
+    environment: Environment,
+    required_a_environment_metadata_field: MetadataModelField,
+) -> Metadata:
     environment_type = ContentType.objects.get_for_model(environment)
     return Metadata.objects.create(
         object_id=environment.id,
@@ -648,7 +848,10 @@ def environment_metadata_a(environment, required_a_environment_metadata_field):
 
 
 @pytest.fixture()
-def environment_metadata_b(environment, optional_b_environment_metadata_field):
+def environment_metadata_b(
+    environment: Environment,
+    optional_b_environment_metadata_field: MetadataModelField,
+) -> Metadata:
     environment_type = ContentType.objects.get_for_model(environment)
     return Metadata.objects.create(
         object_id=environment.id,
@@ -659,13 +862,28 @@ def environment_metadata_b(environment, optional_b_environment_metadata_field):
 
 
 @pytest.fixture()
-def environment_content_type():
+def environment_content_type() -> ContentType:
     return ContentType.objects.get_for_model(Environment)
 
 
 @pytest.fixture()
-def project_content_type():
+def feature_content_type() -> ContentType:
+    return ContentType.objects.get_for_model(Feature)
+
+
+@pytest.fixture()
+def segment_content_type() -> ContentType:
+    return ContentType.objects.get_for_model(Segment)
+
+
+@pytest.fixture()
+def project_content_type() -> ContentType:
     return ContentType.objects.get_for_model(Project)
+
+
+@pytest.fixture()
+def organisation_content_type() -> ContentType:
+    return ContentType.objects.get_for_model(Organisation)
 
 
 @pytest.fixture
@@ -757,6 +975,17 @@ def feature_external_resource(feature: Feature) -> FeatureExternalResource:
 
 
 @pytest.fixture()
+def feature_with_value_external_resource(
+    feature_with_value: Feature,
+) -> FeatureExternalResource:
+    return FeatureExternalResource.objects.create(
+        url="https://github.com/userexample/example-project-repo/issues/11",
+        type="GITHUB_ISSUE",
+        feature=feature_with_value,
+    )
+
+
+@pytest.fixture()
 def github_configuration(organisation: Organisation) -> GithubConfiguration:
     return GithubConfiguration.objects.create(
         organisation=organisation, installation_id=1234567
@@ -774,3 +1003,18 @@ def github_repository(
         repository_name="repositorynametest",
         project=project,
     )
+
+
+@pytest.fixture(
+    params=[
+        "admin_client_original",
+        "admin_master_api_key_client",
+    ]
+)
+def admin_client_new(request, admin_client_original, admin_master_api_key_client):
+    if request.param == "admin_client_original":
+        yield admin_client_original
+    elif request.param == "admin_master_api_key_client":
+        yield admin_master_api_key_client
+    else:
+        assert False, "Request param mismatch"

@@ -107,8 +107,8 @@ class FeatureViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         return {
             "list": ListFeatureSerializer,
-            "retrieve": CreateFeatureSerializer,
-            "create": CreateFeatureSerializer,
+            "retrieve": ListFeatureSerializer,
+            "create": ListFeatureSerializer,
             "update": UpdateFeatureSerializer,
             "partial_update": UpdateFeatureSerializer,
         }.get(self.action, ProjectFeatureSerializer)
@@ -131,7 +131,9 @@ class FeatureViewSet(viewsets.ModelViewSet):
                     ),
                 ),
             )
-            .prefetch_related("multivariate_options", "owners", "tags", "group_owners")
+            .prefetch_related(
+                "multivariate_options", "owners", "tags", "group_owners", "metadata"
+            )
         )
 
         query_serializer = FeatureQuerySerializer(data=self.request.query_params)
@@ -258,12 +260,16 @@ class FeatureViewSet(viewsets.ModelViewSet):
         if not getattr(self, "environment", None):
             self.environment = Environment.objects.get(id=environment_id)
 
-        feature_states = FeatureState.objects.get_live_feature_states(
+        feature_states = get_environment_flags_list(
             environment=self.environment,
-            additional_filters=base_q & filter_search_q & filter_enabled_q,
+            additional_filters=base_q,
         )
 
-        feature_ids = {fs.feature_id for fs in feature_states}
+        feature_ids = FeatureState.objects.filter(
+            filter_search_q & filter_enabled_q,
+            id__in=[fs.id for fs in feature_states],
+        ).values_list("feature_id", flat=True)
+
         return queryset.filter(id__in=feature_ids)
 
     @swagger_auto_schema(

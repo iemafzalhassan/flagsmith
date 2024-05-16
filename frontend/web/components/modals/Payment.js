@@ -12,10 +12,7 @@ const PaymentButton = (props) => {
     AccountStore.getOrganisation().id,
   )
 
-  if (
-    Utils.getFlagsmithHasFeature('upgrade_subscription') &&
-    activeSubscription
-  ) {
+  if (activeSubscription) {
     return (
       <a
         onClick={() => {
@@ -33,7 +30,7 @@ const PaymentButton = (props) => {
             success: (res) => {
               AppActions.updateSubscription(res)
               if (this.props.isDisableAccount) {
-                window.location.href = `/organisation-settings`
+                window.location.href = `/organisations`
               }
             },
           })

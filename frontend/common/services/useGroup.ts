@@ -11,7 +11,10 @@ export const groupService = service
   .injectEndpoints({
     endpoints: (builder) => ({
       createGroup: builder.mutation<Res['group'], Req['createGroup']>({
-        invalidatesTags: [{ id: 'LIST', type: 'Group' }],
+        invalidatesTags: [
+          { id: 'LIST', type: 'Group' },
+          { type: 'GroupSummary' },
+        ],
         queryFn: async (query, { dispatch }, _, baseQuery) => {
           //Create the group
           const { data, error } = await baseQuery({
@@ -47,7 +50,10 @@ export const groupService = service
         Res['groupAdmin'],
         Req['createGroupAdmin']
       >({
-        invalidatesTags: [{ id: 'LIST', type: 'Group' }],
+        invalidatesTags: [
+          { id: 'LIST', type: 'Group' },
+          { type: 'GroupSummary' },
+        ],
         query: (query: Req['createGroupAdmin']) => ({
           body: {},
           method: 'POST',
@@ -70,7 +76,10 @@ export const groupService = service
         Res['groupAdmin'],
         Req['deleteGroupAdmin']
       >({
-        invalidatesTags: [{ id: 'LIST', type: 'Group' }],
+        invalidatesTags: [
+          { id: 'LIST', type: 'Group' },
+          { type: 'GroupSummary' },
+        ],
         query: (query: Req['deleteGroupAdmin']) => ({
           body: {},
           method: 'POST',
@@ -93,13 +102,14 @@ export const groupService = service
         invalidatesTags: (res) => [
           { id: 'LIST', type: 'Group' },
           { id: res?.id, type: 'Group' },
+          { type: 'GroupSummary' },
         ],
         queryFn: async (query, { dispatch }, _, baseQuery) => {
           //Create the group
           const { data, error } = await baseQuery({
             body: query.data,
             method: 'PUT',
-            url: `organisations/${query.orgId}/groups/${query.data.id}`,
+            url: `organisations/${query.orgId}/groups/${query.data.id}/`,
           })
           if (error) {
             return { error }

@@ -4,8 +4,8 @@ description: Feature Flags allow you to ship code and features before they are f
 ---
 
 Flags in Flagsmith are _created and shared at a Project level_, but _overridden at an Environment level_. They can also
-be overridden on a [per Identity](/basic-features/managing-identities.md) or
-[per Segment](/basic-features/managing-segments.md) basis.
+be overridden on a [per Identity](/basic-features/managing-identities.md) or [per Segment](/basic-features/segments.md)
+basis.
 
 Flags within Flagsmith are a combination of both:
 
@@ -98,3 +98,15 @@ other Environments within the Project.
 ### Multi-Variate Flag Use Cases
 
 The primary use case for using Multi-Variate flags is to drive [A/B tests](/advanced-use/ab-testing.md).
+
+### Use Metadata
+
+When creating or updating a feature, you can add Metadata if you was created Metadata Fields in Project Settings ->
+Metadata.
+
+You can add the Metadata in the Feature Setting Tab.
+
+If you have metadata for features, a list of fields that can be filled, saved, and will be stored with the feature's
+save flag will be displayed.
+
+![Image](/img/metadata/metadata-feature-1.png)

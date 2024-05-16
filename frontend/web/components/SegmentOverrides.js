@@ -213,7 +213,7 @@ const SegmentOverrideInner = class Override extends React.Component {
                             theme='text'
                             disabled={!permission}
                             target='_blank'
-                            href={`${document.location.origin}/project/${this.props.projectId}/environment/${this.props.environmentId}/segments?id=${v.segment}`}
+                            href={`${document.location.origin}/project/${this.props.projectId}/segments?id=${v.segment}`}
                             className='btn btn-with-icon'
                           >
                             <span className='no-pointer'>
@@ -677,7 +677,7 @@ class TheComponent extends Component {
                             take priority.{' '}
                             <a
                               target='_blank'
-                              href='https://docs.flagsmith.com/basic-features/managing-segments'
+                              href='https://docs.flagsmith.com/basic-features/segments'
                               rel='noreferrer'
                             >
                               Check the Docs for more details

@@ -22,7 +22,7 @@ from util.mappers.engine import (
     map_identity_to_engine,
 )
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     from flag_engine.identities.models import IdentityModel
 
     from environments.identities.models import Identity
@@ -48,6 +48,7 @@ def map_environment_to_environment_document(
         field_name: _map_value_to_document_value(value)
         for field_name, value in map_environment_to_engine(
             environment,
+            with_integrations=True,
         )
     }
 

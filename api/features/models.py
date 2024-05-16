@@ -5,12 +5,14 @@ import logging
 import typing
 import uuid
 from copy import deepcopy
+from dataclasses import asdict
 
 from core.models import (
     AbstractBaseExportableModel,
     SoftDeleteExportableModel,
     abstract_base_auditable_model_factory,
 )
+from django.contrib.contenttypes.fields import GenericRelation
 from django.core.exceptions import (
     NON_FIELD_ERRORS,
     ObjectDoesNotExist,
@@ -22,6 +24,7 @@ from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 from django_lifecycle import (
     AFTER_CREATE,
+    AFTER_SAVE,
     BEFORE_CREATE,
     BEFORE_SAVE,
     LifecycleModelMixin,
@@ -72,6 +75,8 @@ from features.value_types import (
     STRING,
 )
 from features.versioning.models import EnvironmentFeatureVersion
+from integrations.github.models import GithubConfiguration
+from metadata.models import Metadata
 from projects.models import Project
 from projects.tags.models import Tag
 
@@ -126,10 +131,41 @@ class Feature(
 
     objects = FeatureManager()
 
+    metadata = GenericRelation(Metadata)
+
     class Meta:
         # Note: uniqueness index is added in explicit SQL in the migrations (See 0005, 0050)
         # TODO: after upgrade to Django 4.0 use UniqueConstraint()
         ordering = ("id",)  # explicit ordering to prevent pagination warnings
+
+    @hook(AFTER_SAVE)
+    def create_github_comment(self) -> None:
+        from integrations.github.github import GithubData, generate_data
+        from integrations.github.tasks import (
+            call_github_app_webhook_for_feature_state,
+        )
+        from webhooks.webhooks import WebhookEventType
+
+        if (
+            self.external_resources.exists()
+            and self.project.github_project.exists()
+            and self.project.organisation.github_config.exists()
+            and self.deleted_at
+        ):
+            github_configuration = GithubConfiguration.objects.get(
+                organisation_id=self.project.organisation_id
+            )
+
+            feature_data: GithubData = generate_data(
+                github_configuration=github_configuration,
+                feature=self,
+                type=WebhookEventType.FLAG_DELETED.value,
+                feature_states=[],
+            )
+
+            call_github_app_webhook_for_feature_state.delay(
+                args=(asdict(feature_data),),
+            )
 
     @hook(AFTER_CREATE)
     def create_feature_states(self):
@@ -544,7 +580,10 @@ class FeatureState(
     @property
     def is_live(self) -> bool:
         if self.environment.use_v2_feature_versioning:
-            return self.environment_feature_version.is_live
+            return (
+                self.environment_feature_version is not None
+                and self.environment_feature_version.is_live
+            )
         else:
             return (
                 self.version is not None
@@ -586,7 +625,9 @@ class FeatureState(
             )
 
         clone.environment = env
-        clone.version = None if as_draft else version or self.version
+        clone.version = (
+            None if as_draft or environment_feature_version else version or self.version
+        )
         clone.live_from = live_from
         clone.environment_feature_version = environment_feature_version
         clone.save()
@@ -693,6 +734,7 @@ class FeatureState(
     def check_for_duplicate_feature_state(self):
         if self.version is None:
             return
+
         filter_ = Q(
             environment=self.environment,
             feature=self.feature,
@@ -981,12 +1023,17 @@ class FeatureState(
                 source_feature_id
             ].enabled
 
-            # Copy feature state value from source feature_state
+            if source_feature_state.feature.type == MULTIVARIATE:
+                mv_values = [
+                    mv_value.clone(feature_state=target_feature_state, persist=False)
+                    for mv_value in source_feature_state.multivariate_feature_state_values.all()
+                ]
+                MultivariateFeatureStateValue.objects.bulk_create(mv_values)
+
             target_feature_state.feature_state_value.copy_from(
                 source_feature_state.feature_state_value
             )
 
-            # Save changes to target feature_state
             target_feature_state.save()
 
 

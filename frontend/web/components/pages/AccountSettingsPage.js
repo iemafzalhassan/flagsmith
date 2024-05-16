@@ -17,6 +17,7 @@ import Icon from 'components/Icon'
 import PageTitle from 'components/PageTitle'
 import { Link } from 'react-router-dom'
 import InfoMessage from 'components/InfoMessage'
+import Constants from 'common/constants'
 
 class TheComponent extends Component {
   static displayName = 'TheComponent'
@@ -56,12 +57,14 @@ class TheComponent extends Component {
     })
   }
 
-  confirmDeleteAccount = (lastUserOrganisations, id) => {
+  confirmDeleteAccount = (lastUserOrganisations, id, email, auth_type) => {
     openModal(
       'Are you sure?',
       <ConfirmDeleteAccount
         userId={id}
         lastUserOrganisations={lastUserOrganisations}
+        email={email}
+        auth_type={auth_type}
       />,
       'p-0',
     )
@@ -126,6 +129,7 @@ class TheComponent extends Component {
   render() {
     const {
       state: {
+        auth_type,
         current_password,
         email,
         error,
@@ -305,7 +309,12 @@ class TheComponent extends Component {
                           id='delete-user-btn'
                           data-test='delete-user-btn'
                           onClick={() =>
-                            this.confirmDeleteAccount(lastUserOrganisations, id)
+                            this.confirmDeleteAccount(
+                              lastUserOrganisations,
+                              id,
+                              email,
+                              auth_type,
+                            )
                           }
                           className='btn-with-icon btn-remove'
                         >
@@ -451,7 +460,7 @@ class TheComponent extends Component {
                       ) : (
                         <div className='text-right'>
                           <Link
-                            to='/organisation-settings'
+                            to={Constants.upgradeURL}
                             className='btn btn-primary text-center ml-auto mt-2 mb-2'
                           >
                             Manage payment plan

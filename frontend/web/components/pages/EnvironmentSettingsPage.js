@@ -22,6 +22,8 @@ import { getRolesEnvironmentPermissions } from 'common/services/useRolePermissio
 import AccountStore from 'common/stores/account-store'
 import { Link } from 'react-router-dom'
 import { enableFeatureVersioning } from 'common/services/useEnableFeatureVersioning'
+import AddMetadataToEntity from 'components/metadata/AddMetadataToEntity'
+import { getSupportedContentType } from 'common/services/useSupportedContentType'
 import EnvironmentVersioningListener from 'components/EnvironmentVersioningListener'
 
 const showDisabledFlagOptions = [
@@ -39,39 +41,59 @@ const EnvironmentSettingsPage = class extends Component {
 
   constructor(props, context) {
     super(props, context)
-    this.state = { env: {}, roles: [] }
+    this.state = {
+      env: {},
+      environmentContentType: {},
+      roles: [],
+      showMetadataList: false,
+    }
     AppActions.getProject(this.props.match.params.projectId)
   }
 
   componentDidMount = () => {
     API.trackPage(Constants.pages.ENVIRONMENT_SETTINGS)
-    if (Utils.getFlagsmithHasFeature('show_role_management')) {
-      const env = ProjectStore.getEnvs().find(
-        (v) => v.api_key === this.props.match.params.environmentId,
-      )
-      this.setState({ env })
-      getRoles(
+    this.getEnvironment()
+    this.props.getWebhooks()
+  }
+
+  getEnvironment = () => {
+    const env = ProjectStore.getEnvs().find(
+      (v) => v.api_key === this.props.match.params.environmentId,
+    )
+    this.setState({ env })
+    getRoles(
+      getStore(),
+      { organisation_id: AccountStore.getOrganisation().id },
+      { forceRefetch: true },
+    ).then((roles) => {
+      getRolesEnvironmentPermissions(
         getStore(),
-        { organisation_id: AccountStore.getOrganisation().id },
+        {
+          env_id: env.id,
+          organisation_id: AccountStore.getOrganisation().id,
+          role_id: roles.data.results[0].id,
+        },
         { forceRefetch: true },
-      ).then((roles) => {
-        getRolesEnvironmentPermissions(
-          getStore(),
-          {
-            env_id: env.id,
-            organisation_id: AccountStore.getOrganisation().id,
-            role_id: roles.data.results[0].id,
-          },
-          { forceRefetch: true },
-        ).then((res) => {
-          const matchingItems = roles.data.results.filter((item1) =>
-            res.data.results.some((item2) => item2.role === item1.id),
-          )
-          this.setState({ roles: matchingItems })
-        })
+      ).then((res) => {
+        const matchingItems = roles.data.results.filter((item1) =>
+          res.data.results.some((item2) => item2.role === item1.id),
+        )
+        this.setState({ roles: matchingItems })
+      })
+    })
+
+    if (Utils.getFlagsmithHasFeature('enable_metadata')) {
+      getSupportedContentType(getStore(), {
+        organisation_id: AccountStore.getOrganisation().id,
+      }).then((res) => {
+        const environmentContentType = Utils.getContentType(
+          res.data,
+          'model',
+          'environment',
+        )
+        this.setState({ environmentContentType: environmentContentType })
       })
     }
-
     this.props.getWebhooks()
   }
 
@@ -85,11 +107,17 @@ const EnvironmentSettingsPage = class extends Component {
     ) {
       AppActions.getProject(this.props.match.params.projectId)
     }
+    if (
+      this.props.match.params.environmentId !==
+      prevProps.match.params.environmentId
+    ) {
+      this.getEnvironment()
+    }
   }
 
   onRemove = () => {
     toast('Your project has been removed')
-    this.context.router.history.replace('/organisation-settings')
+    this.context.router.history.replace(Utils.getOrganisationHomePage())
   }
 
   confirmRemove = (environment, cb) => {
@@ -224,6 +252,7 @@ const EnvironmentSettingsPage = class extends Component {
       },
     } = this
     const has4EyesPermission = Utils.getPlansPermission('4_EYES')
+    const metadataEnable = Utils.getFlagsmithHasFeature('enable_metadata')
 
     return (
       <div className='app-container container'>
@@ -238,8 +267,10 @@ const EnvironmentSettingsPage = class extends Component {
               api_key: this.props.match.params.environmentId,
             })
             if (
-              env &&
-              typeof this.state.minimum_change_request_approvals === 'undefined'
+              (env &&
+                typeof this.state.minimum_change_request_approvals ===
+                  'undefined') ||
+              this.state.env?.api_key !== this.props.match.params.environmentId
             ) {
               setTimeout(() => {
                 this.setState({
@@ -506,7 +537,7 @@ const EnvironmentSettingsPage = class extends Component {
                               View and manage your feature changes with a Change
                               Request flow with our{' '}
                               <Link
-                                to='/organisation-settings'
+                                to={Constants.upgradeURL}
                                 className='btn-link'
                               >
                                 Scale-up plan
@@ -729,50 +760,6 @@ const EnvironmentSettingsPage = class extends Component {
                         </div>
                       </div>
                     </TabItem>
-                    <TabItem tabLabel='SDK Keys'>
-                      <FormGroup className='mt-4'>
-                        <h5 className='mb-5'>Client-side Environment Key</h5>
-                        <div className='col-md-6'>
-                          <p className='fs-small lh-sm mb-0'>
-                            Use this key to initialise{' '}
-                            <Button
-                              theme='text'
-                              href='https://docs.flagsmith.com/clients/overview#client-side-sdks'
-                              target='__blank'
-                            >
-                              Client-side
-                            </Button>{' '}
-                            SDKs.
-                          </p>
-                          <Row>
-                            <Flex>
-                              <Input
-                                value={this.props.match.params.environmentId}
-                                inputClassName='input input--wide'
-                                type='text'
-                                title={<h3>Client-side Environment Key</h3>}
-                                placeholder='Client-side Environment Key'
-                              />
-                            </Flex>
-                            <Button
-                              onClick={() => {
-                                navigator.clipboard.writeText(
-                                  this.props.match.params.environmentId,
-                                )
-                                toast('Copied')
-                              }}
-                              className='ml-2 btn-with-icon'
-                            >
-                              <Icon name='copy' width={20} fill='#656D7B' />
-                            </Button>
-                          </Row>
-                        </div>
-                      </FormGroup>
-                      <hr className='py-0 my-4' />
-                      <ServerSideSDKKeys
-                        environmentId={this.props.match.params.environmentId}
-                      />
-                    </TabItem>
                     <TabItem tabLabel='Permissions'>
                       <FormGroup>
                         <EditPermissions
@@ -904,6 +891,34 @@ const EnvironmentSettingsPage = class extends Component {
                         )}
                       </FormGroup>
                     </TabItem>
+                    {metadataEnable &&
+                      this.state.environmentContentType?.id && (
+                        <TabItem tabLabel='Metadata'>
+                          <FormGroup className='mt-5 setting'>
+                            <InputGroup
+                              title={'Metadata'}
+                              tooltip={`${Constants.strings.TOOLTIP_METADATA_DESCRIPTION} environments`}
+                              tooltipPlace='right'
+                              component={
+                                <AddMetadataToEntity
+                                  organisationId={
+                                    AccountStore.getOrganisation().id
+                                  }
+                                  projectId={this.props.match.params.projectId}
+                                  entityId={env.api_key || ''}
+                                  envName={env.name}
+                                  entityContentType={
+                                    this.state.environmentContentType.id
+                                  }
+                                  entity={
+                                    this.state.environmentContentType.model
+                                  }
+                                />
+                              }
+                            />
+                          </FormGroup>
+                        </TabItem>
+                      )}
                   </Tabs>
                 )}
               </>

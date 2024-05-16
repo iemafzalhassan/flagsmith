@@ -19,7 +19,7 @@ import { useGetGroupSummariesQuery } from 'common/services/useGroupSummary'
 type UserGroupListType = {
   noTitle?: boolean
   orgId: string
-  projectId: string | boolean
+  projectId?: string | boolean
   showRemove?: boolean
   onClick: (group: UserGroup) => void
   onEditPermissions?: (group: UserGroup) => void
@@ -110,7 +110,10 @@ const UserGroupsRow: FC<UserGroupsRowType> = ({
             <Button
               id='remove-group'
               type='button'
-              onClick={() => removeGroup(id, name)}
+              onClick={(e) => {
+                e.stopPropagation()
+                removeGroup(id, name)
+              }}
               className='btn btn-with-icon'
             >
               <Icon name='trash-2' width={20} fill='#656D7B' />
